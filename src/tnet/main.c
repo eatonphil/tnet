@@ -5,15 +5,15 @@
 int main() {
   TNET_tcpInit();
 
-  int fd;
-  int err = tapInit(&fd);
+  int tap;
+  int err = TNET_tapInit(&tap);
   if (err != 0) {
     return err;
   }
 
-  tcpServe(fd);
+  TNET_tcpServe(tap);
 
-  tapCleanup(fd);
+  TNET_tapCleanup(tap);
 
   return;
 }

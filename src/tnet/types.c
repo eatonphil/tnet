@@ -1,3 +1,5 @@
+#include "tnet/types.h"
+
 typedef struct __attribute__((__packed__)) {
   uint16_t sourcePort;
   uint16_t destPort;
@@ -9,7 +11,7 @@ typedef struct __attribute__((__packed__)) {
   uint16_t checksum;
   uint16_t urgent;
   uint8_t options[40];
-} TCPSegmentHeader;
+} TNET_TCPSegmentHeader;
 
 typedef struct __attribute__((__packed__)) {
   uint8_t version : 4;
@@ -23,7 +25,7 @@ typedef struct __attribute__((__packed__)) {
   uint32_t sourceIPAddress;
   uint32_t destIPAddress;
   uint8_t options[12];
-} IPv4PacketHeader;
+} TNET_IPv4PacketHeader;
 
 typedef struct __attribute__((__packed__)) {
   uint8_t destMACAddress[6];
@@ -32,4 +34,4 @@ typedef struct __attribute__((__packed__)) {
   uint16_t length;
   uint8_t payload[1500];
   uint32_t frameCheckSequence;
-} EthernetFrame;
+} TNET_EthernetFrame;

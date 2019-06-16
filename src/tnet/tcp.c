@@ -1,10 +1,12 @@
-void tcpSynAck(int *connection, IPv4PacketHeader *packetHeader,
-               TCPSegmentHeader *segmentHeader) {}
+#include "tnet/tcp.h"
 
-void tcpSend(int *connection, IPv4PacketHeader *packetHeader,
-             TCPSegmentHeader *segmentHeader) {}
+void TNET_tcpSynAck(int *connection, IPv4PacketHeader *packetHeader,
+                    TCPSegmentHeader *segmentHeader) {}
 
-void tcpServe(int *connection) {
+void TNET_tcpSend(int *connection, IPv4PacketHeader *packetHeader,
+                  TCPSegmentHeader *segmentHeader) {}
+
+void TNET_tcpServe(int *connection) {
   while (1) {
     EthernetFrame frame = read(connection);
     IPv4PacketHeader packetHeader = (IPv4PacketHeader)frame.payload;
@@ -24,4 +26,6 @@ void tcpServe(int *connection) {
   }
 }
 
-void tcpInit() {}
+void TNET_tcpInit() {}
+
+void TNET_tcpCleanup() {}

@@ -1,7 +1,9 @@
-#include <stdint.h>
+#include "tnet/tap.h"
+#include "tnet/tcp.h"
+#include "tnet/types.h"
 
 int main() {
-  tcpInitState();
+  TNET_tcpInit();
 
   int fd;
   int err = tapInit(&fd);
@@ -11,7 +13,7 @@ int main() {
 
   tcpServe(fd);
 
-  close(fd);
+  tapCleanup(fd);
 
   return;
 }

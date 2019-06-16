@@ -1,4 +1,11 @@
-int tapSetFlags(ifreq *ifr, short flags) {
+#include "tnet/tap.h"
+
+#include "fcntl.h"
+#include "sys/ioctl.h"
+#include "sys/socket.h"
+#include "unistd.h"
+
+int TNET_tapSetFlags(ifreq *ifr, short flags) {
   int sock = socket(AF_INET, SOCK_DGRAM, 0);
 
   // Get current flags
@@ -19,7 +26,7 @@ int tapSetFlags(ifreq *ifr, short flags) {
   return 0;
 }
 
-int tapInit(int *fd) {
+int TNET_tapInit(int *fd) {
   int tmpFd = open("/dev/net/tun", O_RDWR);
   if (tmpFd == -1) {
     return errno;
@@ -41,3 +48,5 @@ int tapInit(int *fd) {
   *fd = tmpFd;
   return 0;
 }
+
+void TNET_tapCleanup(int *fd) { close(fd); }

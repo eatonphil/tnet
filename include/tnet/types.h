@@ -1,6 +1,8 @@
 #ifndef TNET_TYPES_H
 #define TNET_TYPES_H
 
+#include <stdint.h>
+
 typedef struct __attribute__((__packed__)) {
   uint16_t sourcePort;
   uint16_t destPort;

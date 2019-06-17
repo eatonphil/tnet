@@ -1,7 +1,16 @@
-#include "tnet/tcp.h"
-
+#include <errno.h>
+#include <netinet/in.h>
+#include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <time.h>
+#include <unistd.h>
+
+#include "tnet/tcp.h"
+#include "tnet/types.h"
+
+#define DEBUG(str) printf("TNET: %s\n", str)
 
 // http://home.thep.lu.se/~bjorn/crc/crc32_simple.c
 uint32_t crc32_for_byte(uint32_t r) {
@@ -73,34 +82,95 @@ uint16_t tcp_checksum(uint8_t *data, uint16_t len) {
   return ntohs((uint16_t)~sum);
 }
 
-enum TNET_TCPState {
+#define TNET_IPv4_PACKET_FROM_ETHERNET_FRAME(frame)                            \
+  (*((TNET_IPv4PacketHeader *)(void *)&frame->payload))
+
+#define TNET_TCP_SEGMENT_FROM_ETHERNET_FRAME(frame)                            \
+  (*(TNET_TCPSegmentHeader *)(void *)&frame                                    \
+        ->payload[TNET_IPv4_PACKET_FROM_ETHERNET_FRAME(frame).length])
+
+typedef enum {
   TNET_TCP_STATE_CLOSED,
   TNET_TCP_STATE_LISTEN,
   TNET_TCP_STATE_SYN_RECEIVED,
   TNET_TCP_STATE_ESTABLISHED,
+} TNET_TCPState;
+
+typedef struct {
+  int socket;
+  TNET_TCPState state;
+  uint16_t initialSequenceNumber;
+  uint32_t sourceIPAddress;
+  uint16_t sourcePort;
+  uint32_t destIPAddress;
+  uint16_t destPort;
+} TNET_TCPIPv4Connection;
+
+struct {
+  TNET_TCPIPv4Connection *connections;
+  int count;
+  int filled;
+} TNET_TCPIPv4Connections;
+
+TNET_TCPIPv4Connection *TNET_tcpGetConnection(TNET_EthernetFrame *frame) {
+  TNET_IPv4PacketHeader packetHeader =
+      TNET_IPv4_PACKET_FROM_ETHERNET_FRAME(frame);
+  TNET_TCPSegmentHeader segmentHeader =
+      TNET_TCP_SEGMENT_FROM_ETHERNET_FRAME(frame);
+
+  TNET_TCPIPv4Connection conn;
+  int i = 0;
+  for (; i < TNET_TCPIPv4Connections.filled; i++) {
+    conn = TNET_TCPIPv4Connections.connections[i];
+    if (conn.sourceIPAddress == packetHeader.sourceIPAddress &&
+        conn.sourcePort == segmentHeader.sourcePort &&
+        conn.destIPAddress == packetHeader.destIPAddress &&
+        conn.destPort == segmentHeader.destPort) {
+      return TNET_TCPIPv4Connections.connections + i;
+    }
+  }
+
+  if (i != TNET_TCPIPv4Connections.count - 1) {
+    return NULL;
+  }
+
+  return NULL;
 }
 
-TNET_TCPState state = TNET_TCP_STATE_CLOSED;
+TNET_TCPIPv4Connection *TNET_tcpNewConnection(TNET_EthernetFrame *frame,
+                                              int socket,
+                                              uint16_t initialSequenceNumber) {
+  int filled = TNET_TCPIPv4Connections.filled;
+  int count = TNET_TCPIPv4Connections.count;
+  if (filled == count) {
+    return NULL;
+  }
 
-// TODO: Use connection tuple to get/set state.
-#define TNET_TCP_STATE(packetHeader, segmentHeader) state
-#define TNET_TCP_SET_STATE(packetHeader, segmentHeader, newState)              \
-  state = newState
+  TNET_IPv4PacketHeader packetHeader =
+      TNET_IPv4_PACKET_FROM_ETHERNET_FRAME(frame);
+  TNET_TCPSegmentHeader segmentHeader =
+      TNET_TCP_SEGMENT_FROM_ETHERNET_FRAME(frame);
 
-#define TNET_IPv4_PACKET_FROM_ETHERNET_FRAME(frame)                            \
-  ((TNET_IPv4PacketHeader)frame.payload)
+  TNET_TCPIPv4Connection conn = {
+      .socket = socket,
+      .state = TNET_TCP_STATE_LISTEN,
+      .initialSequenceNumber = initialSequenceNumber,
+      .sourceIPAddress = packetHeader.sourceIPAddress,
+      .sourcePort = segmentHeader.sourcePort,
+      .destIPAddress = packetHeader.destIPAddress,
+      .destPort = segmentHeader.destPort,
+  };
 
-#define TNET_TCP_SEGMENT_FROM_ETHERNET_FRAME(frame)                            \
-  ((TNET_TCPSegmentHeader)                                                     \
-       frame.length[((TNET_IPv4PacketHeader)frame.payload).length])
+  TNET_TCPIPv4Connections.connections[TNET_TCPIPv4Connections.filled++] = conn;
 
-void TNET_tcpWrite(int *connection, TNET_EthernetFrame *frame,
-                   TNET_TCPSegmentHeader *segmentHeader, uint8_t *msg,
+  return TNET_TCPIPv4Connections.connections + filled + 1;
+}
+
+void TNET_tcpWrite(TNET_TCPIPv4Connection *conn, TNET_EthernetFrame *frame,
+                   TNET_TCPSegmentHeader *outSegmentHeader, uint8_t *msg,
                    int msgLen) {
   TNET_IPv4PacketHeader packetHeader =
-      TNET_IPv4_PACKET_FROM_ETHERNET_FRAME(*frame);
-  TNET_TCPSegmentHeader segmentHeader =
-      TNET_TCP_SEGMENT_FROM_ETHERNET_FRAME(*frame);
+      TNET_IPv4_PACKET_FROM_ETHERNET_FRAME(frame);
 
   TNET_EthernetFrame outFrame;
   TNET_IPv4PacketHeader outPacketHeader;
@@ -115,21 +185,24 @@ void TNET_tcpWrite(int *connection, TNET_EthernetFrame *frame,
       ip_checksum(&outPacketHeader, outPacketHeader.totalLength);
 
   // Set up Ethernet frame
-  memcpy(outFrame.destMACAddress, 6, frame.sourceMACAddress);
-  memcpy(outFrame.sourceMACAddress, 6, frame.destMACAddress);
+  memcpy(outFrame.destMACAddress, frame->sourceMACAddress, 6);
+  memcpy(outFrame.sourceMACAddress, frame->destMACAddress, 6);
   outFrame.length = htonl(1522);
-  memcpy(outFrame.payload, outPacketHeader.totalLength, outPacketHeader);
-  memcpy(outFrame.payload + 32, 60 + msgLen, outSegmentHeader);
-  memcpy(outFrame.payload + 32 + 60, msgLen, msg);
-  memset(outFrame.payload + 32 + 60 + msgLen, 1500 - (32 + 60 + msgLen), 0);
+  memcpy(outFrame.payload, &outPacketHeader, outPacketHeader.totalLength);
+  memcpy(outFrame.payload + 32, &outSegmentHeader, 60 + msgLen);
+  memcpy(outFrame.payload + 32 + 60, msg, msgLen);
+  memset(outFrame.payload + 32 + 60 + msgLen, 0, 1500 - (32 + 60 + msgLen));
   uint32_t crc;
-  crc32(&outFrame, 1518, &crc);
+  crc32((uint8_t *)&outFrame, 1518, &crc);
   outFrame.frameCheckSequence = htonl(crc);
 
-  write(connection, outFrame, 1522);
+  write(conn->socket, (uint8_t *)&outFrame, 1522);
 }
 
-void TNET_tcpSynAck(int *connection, TNET_EthernetFrame *frame) {
+void TNET_tcpSynAck(TNET_TCPIPv4Connection *conn, TNET_EthernetFrame *frame) {
+  TNET_TCPSegmentHeader segmentHeader =
+      TNET_TCP_SEGMENT_FROM_ETHERNET_FRAME(frame);
+
   TNET_TCPSegmentHeader outSegmentHeader;
 
   uint8_t msg[] = "HTTP/1.1 200 OK\r\n\r\n<h1>Hello world!</h1>";
@@ -138,17 +211,43 @@ void TNET_tcpSynAck(int *connection, TNET_EthernetFrame *frame) {
   outSegmentHeader.sourcePort = segmentHeader.destPort;
   outSegmentHeader.destPort = segmentHeader.sourcePort;
   outSegmentHeader.ackNumber = htonl(ntohl(segmentHeader.ackNumber) + 1);
-  outSegmentHeader.sequenceNumber = htonl(rand());
+  outSegmentHeader.sequenceNumber = htonl(conn->initialSequenceNumber);
   outSegmentHeader.ackFlag = 1;
   outSegmentHeader.synFlag = 1;
   outSegmentHeader.windowSize = segmentHeader.windowSize;
-  outSegmentHeader.checksum = tcp_checksum(&outSegmentHeader, 60 + sizeof(msg));
+  outSegmentHeader.checksum =
+      tcp_checksum((uint8_t *)&outSegmentHeader, 60 + sizeof(msg));
   outSegmentHeader.dataOffset = htonl(60);
 
-  TNET_tcpWrite(connection, frame, &outSegmentHeader, msg, sizeof(msg));
+  TNET_tcpWrite(conn, frame, &outSegmentHeader, msg, sizeof(msg));
 }
 
-void TNET_tcpSend(int *connection, TNET_EthernetFrame *frame) {
+/* void TNET_tcpAck(int connection, TNET_EthernetFrame *frame) { */
+/*   TNET_TCPSegmentHeader segmentHeader = */
+/*       TNET_TCP_SEGMENT_FROM_ETHERNET_FRAME(frame); */
+
+/*   TNET_TCPSegmentHeader outSegmentHeader; */
+
+/*   uint8_t msg[] = "HTTP/1.1 200 OK\r\n\r\n<h1>Hello world!</h1>"; */
+
+/*   // Set up TCP segment header */
+/*   outSegmentHeader.sourcePort = segmentHeader.destPort; */
+/*   outSegmentHeader.destPort = segmentHeader.sourcePort; */
+/*   outSegmentHeader.ackNumber = htonl(ntohl(segmentHeader.ackNumber) + 1); */
+/*   outSegmentHeader.sequenceNumber = segmentHeader.sequenceNumber; */
+/*   outSegmentHeader.ackFlag = 1; */
+/*   outSegmentHeader.windowSize = segmentHeader.windowSize; */
+/*   outSegmentHeader.checksum = */
+/*       tcp_checksum((uint8_t *)&outSegmentHeader, 60 + sizeof(msg)); */
+/*   outSegmentHeader.dataOffset = htonl(60); */
+
+/*   TNET_tcpWrite(connection, frame, &outSegmentHeader, msg, sizeof(msg)); */
+/* } */
+
+void TNET_tcpSend(TNET_TCPIPv4Connection *conn, TNET_EthernetFrame *frame) {
+  TNET_TCPSegmentHeader segmentHeader =
+      TNET_TCP_SEGMENT_FROM_ETHERNET_FRAME(frame);
+
   TNET_TCPSegmentHeader outSegmentHeader;
 
   uint8_t msg[] = "HTTP/1.1 200 OK\r\n\r\n<h1>Hello world!</h1>";
@@ -160,35 +259,55 @@ void TNET_tcpSend(int *connection, TNET_EthernetFrame *frame) {
       htonl(ntohl(segmentHeader.sequenceNumber) + 1);
   outSegmentHeader.ackFlag = 1;
   outSegmentHeader.windowSize = segmentHeader.windowSize;
-  outSegmentHeader.checksum = tcp_checksum(&outSegmentHeader, 60 + sizeof(msg));
+  outSegmentHeader.checksum =
+      tcp_checksum((uint8_t *)&outSegmentHeader, 60 + sizeof(msg));
   outSegmentHeader.dataOffset = htonl(60);
 
-  TNET_tcpWrite(connection, frame, &outSegmentHeader, msg, sizeof(msg));
+  TNET_tcpWrite(conn, frame, &outSegmentHeader, msg, sizeof(msg));
 }
 
-void TNET_tcpServe(int *connection) {
+void TNET_tcpServe(int socket) {
   uint8_t ethernetBytes[1522] = {0};
   int err;
-  TNET_EthernetFrame frame;
-  TNET_IPv4PacketHeader packetHeader;
-  TNET_TCPSegmentHeader segmentHeader;
+  TNET_EthernetFrame *frame;
+  TNET_TCPIPv4Connection *conn;
+
+  DEBUG("Listening");
 
   while (1) {
-    err = read(connection, &ethernetBytes);
+    DEBUG("Reading bytes");
+
+    err = read(socket, &ethernetBytes, 1522);
     if (err == -1) {
       return;
     }
 
-    frame = (TNET_EthernetFrame)ethernetBytes;
+    DEBUG("Read bytes");
 
-    switch (TNET_TCP_STATE(frame)) {
+    frame = (TNET_EthernetFrame *)&ethernetBytes;
+
+    conn = TNET_tcpGetConnection(frame);
+    if (conn == NULL) {
+      conn = TNET_tcpNewConnection(frame, socket, rand());
+      if (conn == NULL) {
+        break;
+      }
+    }
+
+    switch (conn->state) {
+    case TNET_TCP_STATE_CLOSED:
+      break;
     case TNET_TCP_STATE_LISTEN:
-      TNET_tcpSynAck(connection, &frame);
-      TNET_TCP_SET_STATE(frame, TNET_TCP_STATE_SYN_RECEIVED);
+      DEBUG("Sending syn-ack");
+      TNET_tcpSynAck(conn, frame);
+      DEBUG("Sent syn-ack");
+      conn->state = TNET_TCP_STATE_SYN_RECEIVED;
       break;
     case TNET_TCP_STATE_SYN_RECEIVED:
-      TNET_tcpSend(connection, &frame);
-      TNET_TCP_SET_STATE(frame, TNET_TCP_STATE_ESTABLISHED);
+      DEBUG("Sending data");
+      TNET_tcpSend(conn, frame);
+      DEBUG("Sent data");
+      conn->state = TNET_TCP_STATE_ESTABLISHED;
       break;
     case TNET_TCP_STATE_ESTABLISHED:
       // Ignore any incoming frames for now.
@@ -197,9 +316,21 @@ void TNET_tcpServe(int *connection) {
   }
 }
 
-void TNET_tcpInit() {
-  TNET_TCP_SET_STATE(TNET_TCP_STATE_LISTEN);
+int TNET_tcpInit(int count) {
+  TNET_TCPIPv4Connection *connections =
+      (TNET_TCPIPv4Connection *)malloc(sizeof(TNET_TCPIPv4Connection) * count);
+
+  if (connections == NULL) {
+    return -1;
+  }
+
+  TNET_TCPIPv4Connections.connections = connections;
+  TNET_TCPIPv4Connections.count = count;
+  TNET_TCPIPv4Connections.filled = 0;
+
   srand(time(NULL));
+
+  return 0;
 }
 
-void TNET_tcpCleanup() {}
+void TNET_tcpCleanup() { free(TNET_TCPIPv4Connections.connections); }

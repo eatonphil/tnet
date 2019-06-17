@@ -1,9 +1,12 @@
 #include "tnet/tap.h"
 
-#include "fcntl.h"
-#include "sys/ioctl.h"
-#include "sys/socket.h"
-#include "unistd.h"
+#include <errno.h>
+#include <fcntl.h>
+#include <linux/if_tun.h>
+#include <string.h>
+#include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 int TNET_tapSetFlags(ifreq *ifr, short flags) {
   int sock = socket(AF_INET, SOCK_DGRAM, 0);
@@ -43,10 +46,10 @@ int TNET_tapInit(int *fd) {
   }
 
   // Set up and running
-  tapSetFlags(&ifr, IFF_UP | IFF_RUNNING);
+  TNET_tapSetFlags(&ifr, IFF_UP | IFF_RUNNING);
 
   *fd = tmpFd;
   return 0;
 }
 
-void TNET_tapCleanup(int *fd) { close(fd); }
+void TNET_tapCleanup(int fd) { close(fd); }

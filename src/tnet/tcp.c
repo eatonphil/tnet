@@ -12,6 +12,20 @@
 
 #define DEBUG(str) printf("TNET: %s\n", str)
 
+#define DEBUG_SEGMENT(frame)                                                   \
+  {                                                                            \
+    auto segment = TNET_TCP_SEGMENT_FROM_ETHERNET_FRAME(frame);                \
+    printf("Seq: %d, ack: %d, fin: %s, urg: %s, "                              \
+           "psh: %s, rst: %s, syn: %s, ack: %s\n",                             \
+           segment.sequenceNumber, segment.ackNumber,                          \
+           segment.finFlag ? "true" : "false",                                 \
+           segment.urgFlag ? "true" : "false",                                 \
+           segment.pshFlag ? "true" : "false",                                 \
+           segment.rstFlag ? "true" : "false",                                 \
+           segment.synFlag ? "true" : "false",                                 \
+           segment.ackFlag ? "true" : "false");                                \
+  }
+
 // http://home.thep.lu.se/~bjorn/crc/crc32_simple.c
 uint32_t crc32_for_byte(uint32_t r) {
   for (int j = 0; j < 8; ++j)
@@ -99,7 +113,7 @@ typedef enum {
 typedef struct {
   int socket;
   TNET_TCPState state;
-  uint16_t initialSequenceNumber;
+  uint16_t sequenceNumber;
   uint32_t sourceIPAddress;
   uint16_t sourcePort;
   uint32_t destIPAddress;
@@ -154,7 +168,7 @@ TNET_TCPIPv4Connection *TNET_tcpNewConnection(TNET_EthernetFrame *frame,
   TNET_TCPIPv4Connection conn = {
       .socket = socket,
       .state = TNET_TCP_STATE_LISTEN,
-      .initialSequenceNumber = initialSequenceNumber,
+      .sequenceNumber = initialSequenceNumber,
       .sourceIPAddress = packetHeader.sourceIPAddress,
       .sourcePort = segmentHeader.sourcePort,
       .destIPAddress = packetHeader.destIPAddress,
@@ -210,8 +224,8 @@ void TNET_tcpSynAck(TNET_TCPIPv4Connection *conn, TNET_EthernetFrame *frame) {
   // Set up TCP segment header
   outSegmentHeader.sourcePort = segmentHeader.destPort;
   outSegmentHeader.destPort = segmentHeader.sourcePort;
-  outSegmentHeader.ackNumber = htonl(ntohl(segmentHeader.ackNumber) + 1);
-  outSegmentHeader.sequenceNumber = htonl(conn->initialSequenceNumber);
+  outSegmentHeader.ackNumber = htonl(ntohl(segmentHeader.sequenceNumber) + 1);
+  outSegmentHeader.sequenceNumber = htonl(conn->sequenceNumber);
   outSegmentHeader.ackFlag = 1;
   outSegmentHeader.synFlag = 1;
   outSegmentHeader.windowSize = segmentHeader.windowSize;
@@ -255,8 +269,7 @@ void TNET_tcpSend(TNET_TCPIPv4Connection *conn, TNET_EthernetFrame *frame) {
   // Set up TCP segment header
   outSegmentHeader.sourcePort = segmentHeader.destPort;
   outSegmentHeader.destPort = segmentHeader.sourcePort;
-  outSegmentHeader.sequenceNumber =
-      htonl(ntohl(segmentHeader.sequenceNumber) + 1);
+  outSegmentHeader.sequenceNumber = htonl(conn->sequenceNumber++);
   outSegmentHeader.ackFlag = 1;
   outSegmentHeader.windowSize = segmentHeader.windowSize;
   outSegmentHeader.checksum =
@@ -285,6 +298,8 @@ void TNET_tcpServe(int socket) {
     DEBUG("Read bytes");
 
     frame = (TNET_EthernetFrame *)&ethernetBytes;
+
+    DEBUG_SEGMENT(frame);
 
     conn = TNET_tcpGetConnection(frame);
     if (conn == NULL) {

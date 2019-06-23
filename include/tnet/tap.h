@@ -1,11 +1,11 @@
 #ifndef TNET_TAP_H
 #define TNET_TAP_H
 
-#include "net/if.h"
+#include <net/if.h>
 
 int TNET_tapSetFlags(ifreq *ifr, short flags);
 
-int TNET_tapInit(int *fd);
+int TNET_tapInit(int *fd, char ifname[IFNAMSIZ]);
 
 void TNET_tapCleanup(int fd);
 

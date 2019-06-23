@@ -1,7 +1,9 @@
 #ifndef TNET_TCP_H
 #define TNET_TCP_H
 
-void TNET_tcpServe(int socket);
+#include <net/if.h>
+
+void TNET_tcpServe(int socket, char ifname[IFNAMSIZ]);
 
 int TNET_tcpInit(int nConnections);
 

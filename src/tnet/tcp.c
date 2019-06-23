@@ -4,11 +4,16 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <time.h>
 #include <unistd.h>
 
 #include "tnet/tcp.h"
 #include "tnet/types.h"
+
+#define TNET_PS 1480
+#define TNET_SS 1500
+#define TNET_FS TNET_SS + 18
 
 #define DEBUG(str) printf("TNET: %s\n", str)
 
@@ -42,6 +47,36 @@
            segment.finFlag ? "true" : "false", ntohs(segment.windowSize),      \
            ntohs(segment.checksum), ntohs(segment.urgent));                    \
   }
+
+#define DEBUG_ARP_PACKET(arpPacket)                                            \
+  printf(                                                                      \
+      "ARP PACKET\n"                                                           \
+      "Hardware type: %#06x\n"                                                 \
+      "Protocol type: %#06x\n"                                                 \
+      "Hardware address length: %d\n"                                          \
+      "Protocol address length: %d\n"                                          \
+      "Operation: %d\n"                                                        \
+      "Source hardware address: %02x:%02x:%02x:%02x:%02x:%02x\n"               \
+      "Source protocol address: %d.%d.%d.%d\n"                                 \
+      "Dest hardware address: %02x:%02x:%02x:%02x:%02x:%02x\n"                 \
+      "Dest protocol address: %d.%d.%d.%d\n",                                  \
+      ntohs(arpPacket.hardwareType), ntohs(arpPacket.protocolType),            \
+      arpPacket.hardwareAddressLength, arpPacket.protocolAddressLength,        \
+      ntohs(arpPacket.operation), arpPacket.sourceHardwareAddress[0],          \
+      arpPacket.sourceHardwareAddress[1], arpPacket.sourceHardwareAddress[2],  \
+      arpPacket.sourceHardwareAddress[3], arpPacket.sourceHardwareAddress[4],  \
+      arpPacket.sourceHardwareAddress[5],                                      \
+      arpPacket.sourceProtocolAddress & 0xff,                                  \
+      arpPacket.sourceProtocolAddress >> 1 & 0xff,                             \
+      arpPacket.sourceProtocolAddress >> 2 & 0xff,                             \
+      arpPacket.sourceProtocolAddress >> 3 & 0xff,                             \
+      arpPacket.destHardwareAddress[0], arpPacket.destHardwareAddress[1],      \
+      arpPacket.destHardwareAddress[2], arpPacket.destHardwareAddress[3],      \
+      arpPacket.destHardwareAddress[4], arpPacket.destHardwareAddress[5],      \
+      arpPacket.destProtocolAddress & 0xff,                                    \
+      arpPacket.destProtocolAddress >> 1 & 0xff,                               \
+      arpPacket.destProtocolAddress >> 2 & 0xff,                               \
+      arpPacket.destProtocolAddress >> 3 & 0xff)
 
 // http://home.thep.lu.se/~bjorn/crc/crc32_simple.c
 uint32_t crc32_for_byte(uint32_t r) {
@@ -131,7 +166,7 @@ typedef enum {
 } TNET_TCPState;
 
 typedef struct {
-  int socket;
+  int sock;
   TNET_TCPState state;
   uint16_t sequenceNumber;
   uint32_t sourceIPAddress;
@@ -172,7 +207,7 @@ TNET_TCPIPv4Connection *TNET_tcpGetConnection(TNET_EthernetFrame *frame) {
 }
 
 TNET_TCPIPv4Connection *TNET_tcpNewConnection(TNET_EthernetFrame *frame,
-                                              int socket,
+                                              int sock,
                                               uint16_t initialSequenceNumber) {
   int filled = TNET_TCPIPv4Connections.filled;
   int count = TNET_TCPIPv4Connections.count;
@@ -186,7 +221,7 @@ TNET_TCPIPv4Connection *TNET_tcpNewConnection(TNET_EthernetFrame *frame,
       TNET_TCP_SEGMENT_FROM_ETHERNET_FRAME(frame);
 
   TNET_TCPIPv4Connection conn = {
-      .socket = socket,
+      .sock = sock,
       .state = TNET_TCP_STATE_LISTEN,
       .sequenceNumber = initialSequenceNumber,
       .sourceIPAddress = packetHeader.sourceIPAddress,
@@ -200,16 +235,29 @@ TNET_TCPIPv4Connection *TNET_tcpNewConnection(TNET_EthernetFrame *frame,
   return TNET_TCPIPv4Connections.connections + filled + 1;
 }
 
+void TNET_ethSend(int sock, TNET_EthernetFrame *frame, uint16_t type,
+                  uint8_t *msg, int msgLen) {
+  TNET_EthernetFrame outFrame;
+  memcpy(outFrame.destMACAddress, frame->sourceMACAddress, 6);
+  memcpy(outFrame.sourceMACAddress, frame->destMACAddress, 6);
+  outFrame.type = htons(type);
+  memcpy(outFrame.payload, msg, msgLen);
+  uint32_t crc;
+  crc32((uint8_t *)&outFrame, sizeof(TNET_EthernetFrame), &crc);
+  outFrame.frameCheckSequence = htonl(crc);
+
+  write(sock, (uint8_t *)&outFrame, sizeof(TNET_EthernetFrame));
+}
+
 void TNET_ipv4Send(TNET_TCPIPv4Connection *conn, TNET_EthernetFrame *frame,
                    TNET_TCPSegmentHeader *outSegmentHeader, uint8_t *msg,
                    int msgLen) {
   TNET_IPv4PacketHeader packetHeader =
       TNET_IPv4_PACKET_FROM_ETHERNET_FRAME(frame);
 
-  TNET_EthernetFrame outFrame;
   TNET_IPv4PacketHeader outPacketHeader;
+  uint8_t payload[TNET_SS] = {0};
 
-  // Set up IP packet header
   outPacketHeader.length = htonl(32);
   outPacketHeader.totalLength = htonl(32 + 60 + msgLen);
   outPacketHeader.sourceIPAddress = packetHeader.destIPAddress;
@@ -217,20 +265,9 @@ void TNET_ipv4Send(TNET_TCPIPv4Connection *conn, TNET_EthernetFrame *frame,
   outPacketHeader.protocol = 0x2;
   outPacketHeader.checksum =
       ip_checksum(&outPacketHeader, outPacketHeader.totalLength);
+  memcpy(payload, &outPacketHeader, outPacketHeader.totalLength);
 
-  // Set up Ethernet frame
-  memcpy(outFrame.destMACAddress, frame->sourceMACAddress, 6);
-  memcpy(outFrame.sourceMACAddress, frame->destMACAddress, 6);
-  outFrame.type = htons(TNET_ETHERNET_TYPE_IPv4);
-  memcpy(outFrame.payload, &outPacketHeader, outPacketHeader.totalLength);
-  memcpy(outFrame.payload + 32, &outSegmentHeader, 60 + msgLen);
-  memcpy(outFrame.payload + 32 + 60, msg, msgLen);
-  memset(outFrame.payload + 32 + 60 + msgLen, 0, 1500 - (32 + 60 + msgLen));
-  uint32_t crc;
-  crc32((uint8_t *)&outFrame, 1518, &crc);
-  outFrame.frameCheckSequence = htonl(crc);
-
-  write(conn->socket, (uint8_t *)&outFrame, 1522);
+  TNET_ethSend(conn->sock, frame, TNET_ETHERNET_TYPE_IPv4, payload, TNET_SS);
 }
 
 void TNET_tcpSynAck(TNET_TCPIPv4Connection *conn, TNET_EthernetFrame *frame) {
@@ -262,20 +299,25 @@ void TNET_tcpSynAck(TNET_TCPIPv4Connection *conn, TNET_EthernetFrame *frame) {
 
 /*   TNET_TCPSegmentHeader outSegmentHeader; */
 
-/*   uint8_t msg[] = "HTTP/1.1 200 OK\r\n\r\n<h1>Hello world!</h1>"; */
+/*   uint8_t msg[] = "HTTP/1.1 200 OK\r\n\r\n<h1>Hello world!</h1>";
+ */
 
 /*   // Set up TCP segment header */
 /*   outSegmentHeader.sourcePort = segmentHeader.destPort; */
 /*   outSegmentHeader.destPort = segmentHeader.sourcePort; */
-/*   outSegmentHeader.ackNumber = htonl(ntohl(segmentHeader.ackNumber) + 1); */
-/*   outSegmentHeader.sequenceNumber = segmentHeader.sequenceNumber; */
+/*   outSegmentHeader.ackNumber =
+ * htonl(ntohl(segmentHeader.ackNumber) + 1); */
+/*   outSegmentHeader.sequenceNumber = segmentHeader.sequenceNumber;
+ */
 /*   outSegmentHeader.ackFlag = 1; */
 /*   outSegmentHeader.windowSize = segmentHeader.windowSize; */
 /*   outSegmentHeader.checksum = */
-/*       tcp_checksum((uint8_t *)&outSegmentHeader, 60 + sizeof(msg)); */
+/*       tcp_checksum((uint8_t *)&outSegmentHeader, 60 +
+ * sizeof(msg)); */
 /*   outSegmentHeader.dataOffset = htonl(60); */
 
-/*   TNET_tcpWrite(connection, frame, &outSegmentHeader, msg, sizeof(msg)); */
+/*   TNET_tcpWrite(connection, frame, &outSegmentHeader, msg,
+ * sizeof(msg)); */
 /* } */
 
 void TNET_tcpSend(TNET_TCPIPv4Connection *conn, TNET_EthernetFrame *frame) {
@@ -299,12 +341,13 @@ void TNET_tcpSend(TNET_TCPIPv4Connection *conn, TNET_EthernetFrame *frame) {
   TNET_ipv4Send(conn, frame, &outSegmentHeader, msg, sizeof(msg));
 }
 
-void TNET_arpRespond(int socket, TNET_EthernetFrame *frame,
+void TNET_arpRespond(int sock, TNET_EthernetFrame *frame,
                      char ifname[IFNAMSIZ]) {
   TNET_ARPPacket packet = TNET_ARP_PACKET_FROM_ETHERNET_FRAME(frame);
   TNET_ARPPacket outPacket = {0};
 
-  if (packet.protocolType != TNET_ETHERNET_TYPE_IPv4) {
+  if (ntohs(packet.protocolType) != TNET_ETHERNET_TYPE_IPv4) {
+    DEBUG("Dropping non-ipv4 arp request");
     return;
   }
 
@@ -312,24 +355,41 @@ void TNET_arpRespond(int socket, TNET_EthernetFrame *frame,
   strcpy(ifr.ifr_name, ifname);
   ifr.ifr_addr.sa_family = AF_INET;
 
-  int querySocket = socket(AF_INET, SOCK_DGRAM, 0);
-  if (ioctl(sock, SIOCGIFHWADDR, &ifr) < 0) {
-    return -1;
+  // Fill out MAC address
+  int querySock = socket(AF_INET, SOCK_DGRAM, 0);
+  if (ioctl(querySock, SIOCGIFHWADDR, &ifr) < 0) {
+    DEBUG("Dropping arp request after bad ioctl request");
+    return;
   }
 
+  memcpy(outPacket.sourceHardwareAddress, ifr.ifr_hwaddr.sa_data, 6);
+
+  // Fill out IP address
+  querySock = socket(AF_INET, SOCK_DGRAM, 0);
+  if (ioctl(querySock, SIOCGIFADDR, &ifr) < 0) {
+    DEBUG("Dropping arp request after bad ioctl request");
+    return;
+  }
+
+  memcpy(&outPacket.sourceProtocolAddress, ifr.ifr_addr.sa_data, 4);
+
+  // Fill out rest
   outPacket.hardwareType = packet.hardwareType;
   outPacket.protocolType = packet.protocolType;
   outPacket.hardwareAddressLength = packet.hardwareAddressLength;
   outPacket.protocolAddressLength = packet.protocolAddressLength;
   outPacket.operation = htons(2); // Response
-  memcpy(outPacket.sourceHardwareAddress, ifr.ifr_hwaddr.sa_data, 6);
-  outPacket.sourceProtocolAddress = packet.destProtocolAddress;
   memcpy(outPacket.destHardwareAddress, packet.sourceHardwareAddress, 6);
   outPacket.destProtocolAddress = packet.sourceProtocolAddress;
+
+  DEBUG_ARP_PACKET(outPacket);
+
+  TNET_ethSend(sock, frame, TNET_ETHERNET_TYPE_ARP, (uint8_t *)&outPacket,
+               sizeof(outPacket));
 }
 
-void TNET_tcpServe(int socket, char ifname[IFNAMSIZ]) {
-  uint8_t ethernetBytes[1522] = {0};
+void TNET_tcpServe(int sock, char ifname[IFNAMSIZ]) {
+  uint8_t ethernetBytes[TNET_FS] = {0};
   int err;
   TNET_EthernetFrame *frame;
   TNET_TCPIPv4Connection *conn;
@@ -337,24 +397,24 @@ void TNET_tcpServe(int socket, char ifname[IFNAMSIZ]) {
   DEBUG("Listening");
 
   while (1) {
-    DEBUG("Reading bytes");
-
-    err = read(socket, &ethernetBytes, 1522);
+    err = read(sock, &ethernetBytes, TNET_FS);
     if (err == -1) {
       return;
     }
 
-    DEBUG("Read bytes");
-
     frame = (TNET_EthernetFrame *)&ethernetBytes;
 
+    printf("TNET: Received frame of type %#06x\n", ntohs(frame->type));
+
     if (frame->type == htons(TNET_ETHERNET_TYPE_ARP)) {
-      TNET_arpRespond(socket, frame, ifname);
+      TNET_ARPPacket packet = TNET_ARP_PACKET_FROM_ETHERNET_FRAME(frame);
+      DEBUG_ARP_PACKET(packet);
+      TNET_arpRespond(sock, frame, ifname);
       continue;
     }
 
     if (frame->type != htons(TNET_ETHERNET_TYPE_IPv4)) {
-      printf("TNET: Dropping frame of type %#06x\n", ntohs(frame->type));
+      DEBUG("Dropping frame");
       continue;
     }
 
@@ -362,7 +422,7 @@ void TNET_tcpServe(int socket, char ifname[IFNAMSIZ]) {
 
     conn = TNET_tcpGetConnection(frame);
     if (conn == NULL) {
-      conn = TNET_tcpNewConnection(frame, socket, rand());
+      conn = TNET_tcpNewConnection(frame, sock, rand());
       if (conn == NULL) {
         break;
       }

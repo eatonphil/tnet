@@ -32,7 +32,7 @@ typedef struct __attribute__((__packed__)) {
   uint16_t sourceProtocolAddress;
   uint8_t destHardwareAddress[6];
   uint16_t destProtocolAddress;
-} TNET_ARPPacketHeader;
+} TNET_ARPPacket;
 
 typedef struct __attribute__((__packed__)) {
   uint8_t version : 4;

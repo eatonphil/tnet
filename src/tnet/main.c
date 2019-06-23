@@ -6,7 +6,8 @@
 
 int main() {
   int tap;
-  int err = TNET_tapInit(&tap);
+  char ifname[IFNAMSIZ];
+  int err = TNET_tapInit(&tap, ifname);
   if (err != 0) {
     printf("TNET: Error initializing TAP device.\n");
     return err;
@@ -19,7 +20,7 @@ int main() {
     return err;
   }
 
-  TNET_tcpServe(tap);
+  TNET_tcpServe(tap, ifname);
 
   TNET_tapCleanup(tap);
 

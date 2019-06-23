@@ -29,7 +29,7 @@ int TNET_tapSetFlags(ifreq *ifr, short flags) {
   return 0;
 }
 
-int TNET_tapInit(int *fd) {
+int TNET_tapInit(int *fd, char ifname[IFNAMSIZ]) {
   int tmpFd = open("/dev/net/tun", O_RDWR);
   if (tmpFd == -1) {
     return errno;
@@ -47,6 +47,9 @@ int TNET_tapInit(int *fd) {
 
   // Set up and running
   TNET_tapSetFlags(&ifr, IFF_UP | IFF_RUNNING);
+
+  // Return ifname
+  memcpy(ifname, ifr.ifr_name, IFNAMSIZ);
 
   *fd = tmpFd;
   return 0;

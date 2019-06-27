@@ -29,9 +29,9 @@ typedef struct __attribute__((__packed__)) {
   uint8_t protocolAddressLength;
   uint16_t operation;
   uint8_t sourceHardwareAddress[6];
-  uint16_t sourceProtocolAddress;
+  uint32_t sourceProtocolAddress;
   uint8_t destHardwareAddress[6];
-  uint16_t destProtocolAddress;
+  uint32_t destProtocolAddress;
 } TNET_ARPPacket;
 
 typedef struct __attribute__((__packed__)) {

@@ -1,3 +1,3 @@
 FROM debian:unstable
 
-RUN apt update -y && apt install build-essential net-tools emacs ethtool curl -y
+RUN apt update -y && apt install build-essential net-tools emacs ethtool curl arping -y

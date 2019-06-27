@@ -67,16 +67,16 @@
       arpPacket.sourceHardwareAddress[3], arpPacket.sourceHardwareAddress[4],  \
       arpPacket.sourceHardwareAddress[5],                                      \
       arpPacket.sourceProtocolAddress & 0xff,                                  \
-      arpPacket.sourceProtocolAddress >> 1 & 0xff,                             \
-      arpPacket.sourceProtocolAddress >> 2 & 0xff,                             \
-      arpPacket.sourceProtocolAddress >> 3 & 0xff,                             \
+      (arpPacket.sourceProtocolAddress >> 8) & 0xff,                           \
+      (arpPacket.sourceProtocolAddress >> 16) & 0xff,                          \
+      (arpPacket.sourceProtocolAddress >> 24) & 0xff,                          \
       arpPacket.destHardwareAddress[0], arpPacket.destHardwareAddress[1],      \
       arpPacket.destHardwareAddress[2], arpPacket.destHardwareAddress[3],      \
       arpPacket.destHardwareAddress[4], arpPacket.destHardwareAddress[5],      \
       arpPacket.destProtocolAddress & 0xff,                                    \
-      arpPacket.destProtocolAddress >> 1 & 0xff,                               \
-      arpPacket.destProtocolAddress >> 2 & 0xff,                               \
-      arpPacket.destProtocolAddress >> 3 & 0xff)
+      (arpPacket.destProtocolAddress >> 8) & 0xff,                             \
+      (arpPacket.destProtocolAddress >> 16) & 0xff,                            \
+      (arpPacket.destProtocolAddress >> 24) & 0xff)
 
 // http://home.thep.lu.se/~bjorn/crc/crc32_simple.c
 uint32_t crc32_for_byte(uint32_t r) {
@@ -362,7 +362,8 @@ void TNET_arpRespond(int sock, TNET_EthernetFrame *frame,
     return;
   }
 
-  memcpy(outPacket.sourceHardwareAddress, ifr.ifr_hwaddr.sa_data, 6);
+  memcpy(outPacket.sourceHardwareAddress, ifr.ifr_hwaddr.sa_data,
+         sizeof(outPacket.sourceHardwareAddress));
 
   // Fill out IP address
   querySock = socket(AF_INET, SOCK_DGRAM, 0);
@@ -371,7 +372,8 @@ void TNET_arpRespond(int sock, TNET_EthernetFrame *frame,
     return;
   }
 
-  memcpy(&outPacket.sourceProtocolAddress, ifr.ifr_addr.sa_data, 4);
+  struct sockaddr_in *ipaddr = (struct sockaddr_in *)&ifr.ifr_addr;
+  outPacket.sourceProtocolAddress = ipaddr->sin_addr.s_addr;
 
   // Fill out rest
   outPacket.hardwareType = packet.hardwareType;

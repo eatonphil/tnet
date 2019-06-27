@@ -1,5 +1,7 @@
+#include <arpa/inet.h>
 #include <errno.h>
 #include <netinet/in.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -446,7 +448,7 @@ int TNET_tcpInit(int count, char ifname[IFNAMSIZ]) {
   TNET_TCPIPv4Connections.count = count;
   TNET_TCPIPv4Connections.filled = 0;
 
-  struct ifreq ifr;
+  struct ifreq ifr = {0};
   strcpy(ifr.ifr_name, ifname);
   ifr.ifr_addr.sa_family = AF_INET;
 
@@ -461,14 +463,20 @@ int TNET_tcpInit(int count, char ifname[IFNAMSIZ]) {
          sizeof(TNET_TCPIPv4Connections.mac));
 
   // Fill out IP address
-  querySock = socket(AF_INET, SOCK_DGRAM, 0);
-  if (ioctl(querySock, SIOCGIFADDR, &ifr) < 0) {
-    DEBUG("Bad ioctl request for protocol address");
+  struct ifreq ifr2 = {0};
+  strcpy(ifr2.ifr_name, ifname);
+  struct sockaddr_in sai = {0};
+  sai.sin_family = AF_INET;
+  sai.sin_port = 0;
+  sai.sin_addr.s_addr = inet_addr("192.168.2.3");
+  ifr2.ifr_addr = *((sockaddr *)&sai);
+
+  if (ioctl(querySock, SIOCSIFADDR, &ifr2) < 0) {
+    DEBUG("Bad ioctl request to set protocol address");
     return 0;
   }
 
-  struct sockaddr_in *ipaddr = (struct sockaddr_in *)&ifr.ifr_addr;
-  TNET_TCPIPv4Connections.ip = ipaddr->sin_addr.s_addr;
+  TNET_TCPIPv4Connections.ip = sai.sin_addr.s_addr;
 
   srand(time(NULL));
 

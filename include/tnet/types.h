@@ -3,6 +3,10 @@
 
 #include <stdint.h>
 
+const int TNET_PS = 1480;
+const int TNET_SS = 1500;
+const int TNET_FS = TNET_SS + 18;
+
 typedef struct __attribute__((__packed__)) {
   uint16_t sourcePort;
   uint16_t destPort;
@@ -57,7 +61,7 @@ typedef struct __attribute__((__packed__)) {
   uint8_t destMACAddress[6];
   uint8_t sourceMACAddress[6];
   uint16_t type;
-  uint8_t payload[1500];
+  uint8_t payload[TNET_SS];
   uint32_t frameCheckSequence;
 } TNET_EthernetFrame;
 

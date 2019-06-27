@@ -11,10 +11,6 @@
 #include "tnet/tcp.h"
 #include "tnet/types.h"
 
-#define TNET_PS 1480
-#define TNET_SS 1500
-#define TNET_FS TNET_SS + 18
-
 #define DEBUG(str) printf("TNET: %s\n", str)
 
 #define DEBUG_SEGMENT(frame)                                                   \
@@ -179,6 +175,8 @@ struct {
   TNET_TCPIPv4Connection *connections;
   int count;
   int filled;
+  uint8_t mac[6];
+  uint32_t ip;
 } TNET_TCPIPv4Connections;
 
 TNET_TCPIPv4Connection *TNET_tcpGetConnection(TNET_EthernetFrame *frame) {
@@ -230,6 +228,7 @@ TNET_TCPIPv4Connection *TNET_tcpNewConnection(TNET_EthernetFrame *frame,
       .destPort = segmentHeader.destPort,
   };
 
+  // Store new connection
   TNET_TCPIPv4Connections.connections[TNET_TCPIPv4Connections.filled++] = conn;
 
   return TNET_TCPIPv4Connections.connections + filled + 1;
@@ -238,15 +237,20 @@ TNET_TCPIPv4Connection *TNET_tcpNewConnection(TNET_EthernetFrame *frame,
 void TNET_ethSend(int sock, TNET_EthernetFrame *frame, uint16_t type,
                   uint8_t *msg, int msgLen) {
   TNET_EthernetFrame outFrame;
-  memcpy(outFrame.destMACAddress, frame->sourceMACAddress, 6);
-  memcpy(outFrame.sourceMACAddress, frame->destMACAddress, 6);
+  memcpy(outFrame.destMACAddress, frame->sourceMACAddress,
+         sizeof(TNET_TCPIPv4Connections.mac));
+  memcpy(outFrame.sourceMACAddress, TNET_TCPIPv4Connections.mac,
+         sizeof(TNET_TCPIPv4Connections.mac));
   outFrame.type = htons(type);
+
   memcpy(outFrame.payload, msg, msgLen);
+  int frameLength = sizeof(TNET_EthernetFrame) - TNET_SS + msgLen;
+
   uint32_t crc;
-  crc32((uint8_t *)&outFrame, sizeof(TNET_EthernetFrame), &crc);
+  crc32((uint8_t *)&outFrame, frameLength, &crc);
   outFrame.frameCheckSequence = htonl(crc);
 
-  write(sock, (uint8_t *)&outFrame, sizeof(TNET_EthernetFrame));
+  write(sock, (uint8_t *)&outFrame, frameLength);
 }
 
 void TNET_ipv4Send(TNET_TCPIPv4Connection *conn, TNET_EthernetFrame *frame,
@@ -341,8 +345,7 @@ void TNET_tcpSend(TNET_TCPIPv4Connection *conn, TNET_EthernetFrame *frame) {
   TNET_ipv4Send(conn, frame, &outSegmentHeader, msg, sizeof(msg));
 }
 
-void TNET_arpRespond(int sock, TNET_EthernetFrame *frame,
-                     char ifname[IFNAMSIZ]) {
+void TNET_arpRespond(int sock, TNET_EthernetFrame *frame) {
   TNET_ARPPacket packet = TNET_ARP_PACKET_FROM_ETHERNET_FRAME(frame);
   TNET_ARPPacket outPacket = {0};
 
@@ -351,36 +354,15 @@ void TNET_arpRespond(int sock, TNET_EthernetFrame *frame,
     return;
   }
 
-  struct ifreq ifr;
-  strcpy(ifr.ifr_name, ifname);
-  ifr.ifr_addr.sa_family = AF_INET;
-
-  // Fill out MAC address
-  int querySock = socket(AF_INET, SOCK_DGRAM, 0);
-  if (ioctl(querySock, SIOCGIFHWADDR, &ifr) < 0) {
-    DEBUG("Dropping arp request after bad ioctl request");
-    return;
-  }
-
-  memcpy(outPacket.sourceHardwareAddress, ifr.ifr_hwaddr.sa_data,
-         sizeof(outPacket.sourceHardwareAddress));
-
-  // Fill out IP address
-  querySock = socket(AF_INET, SOCK_DGRAM, 0);
-  if (ioctl(querySock, SIOCGIFADDR, &ifr) < 0) {
-    DEBUG("Dropping arp request after bad ioctl request");
-    return;
-  }
-
-  struct sockaddr_in *ipaddr = (struct sockaddr_in *)&ifr.ifr_addr;
-  outPacket.sourceProtocolAddress = ipaddr->sin_addr.s_addr;
-
   // Fill out rest
   outPacket.hardwareType = packet.hardwareType;
   outPacket.protocolType = packet.protocolType;
   outPacket.hardwareAddressLength = packet.hardwareAddressLength;
   outPacket.protocolAddressLength = packet.protocolAddressLength;
   outPacket.operation = htons(2); // Response
+  memcpy(outPacket.sourceHardwareAddress, TNET_TCPIPv4Connections.mac,
+         sizeof(outPacket.sourceHardwareAddress));
+  outPacket.sourceProtocolAddress = packet.destProtocolAddress;
   memcpy(outPacket.destHardwareAddress, packet.sourceHardwareAddress, 6);
   outPacket.destProtocolAddress = packet.sourceProtocolAddress;
 
@@ -390,7 +372,7 @@ void TNET_arpRespond(int sock, TNET_EthernetFrame *frame,
                sizeof(outPacket));
 }
 
-void TNET_tcpServe(int sock, char ifname[IFNAMSIZ]) {
+void TNET_tcpServe(int sock) {
   uint8_t ethernetBytes[TNET_FS] = {0};
   int err;
   TNET_EthernetFrame *frame;
@@ -411,7 +393,7 @@ void TNET_tcpServe(int sock, char ifname[IFNAMSIZ]) {
     if (frame->type == htons(TNET_ETHERNET_TYPE_ARP)) {
       TNET_ARPPacket packet = TNET_ARP_PACKET_FROM_ETHERNET_FRAME(frame);
       DEBUG_ARP_PACKET(packet);
-      TNET_arpRespond(sock, frame, ifname);
+      TNET_arpRespond(sock, frame);
       continue;
     }
 
@@ -452,7 +434,7 @@ void TNET_tcpServe(int sock, char ifname[IFNAMSIZ]) {
   }
 }
 
-int TNET_tcpInit(int count) {
+int TNET_tcpInit(int count, char ifname[IFNAMSIZ]) {
   TNET_TCPIPv4Connection *connections =
       (TNET_TCPIPv4Connection *)malloc(sizeof(TNET_TCPIPv4Connection) * count);
 
@@ -463,6 +445,30 @@ int TNET_tcpInit(int count) {
   TNET_TCPIPv4Connections.connections = connections;
   TNET_TCPIPv4Connections.count = count;
   TNET_TCPIPv4Connections.filled = 0;
+
+  struct ifreq ifr;
+  strcpy(ifr.ifr_name, ifname);
+  ifr.ifr_addr.sa_family = AF_INET;
+
+  // Fill out MAC address
+  int querySock = socket(AF_INET, SOCK_DGRAM, 0);
+  if (ioctl(querySock, SIOCGIFHWADDR, &ifr) < 0) {
+    DEBUG("Bad ioctl request for hardware address");
+    return -1;
+  }
+
+  memcpy(TNET_TCPIPv4Connections.mac, ifr.ifr_hwaddr.sa_data,
+         sizeof(TNET_TCPIPv4Connections.mac));
+
+  // Fill out IP address
+  querySock = socket(AF_INET, SOCK_DGRAM, 0);
+  if (ioctl(querySock, SIOCGIFADDR, &ifr) < 0) {
+    DEBUG("Bad ioctl request for protocol address");
+    return 0;
+  }
+
+  struct sockaddr_in *ipaddr = (struct sockaddr_in *)&ifr.ifr_addr;
+  TNET_TCPIPv4Connections.ip = ipaddr->sin_addr.s_addr;
 
   srand(time(NULL));
 

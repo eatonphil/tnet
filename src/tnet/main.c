@@ -14,13 +14,13 @@ int main() {
   }
 
   int nConnections = 2;
-  err = TNET_tcpInit(nConnections);
+  err = TNET_tcpInit(nConnections, ifname);
   if (err != 0) {
     printf("TNET: Error initializing TCP/IP stack.\n");
     return err;
   }
 
-  TNET_tcpServe(tap, ifname);
+  TNET_tcpServe(tap);
 
   TNET_tapCleanup(tap);
 

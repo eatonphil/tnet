@@ -15,10 +15,10 @@
 
 #define DEBUG(str) printf("TNET: %s\n", str)
 
-#define DEBUG_SEGMENT(frame)                                                   \
+#define DEBUG_TCP_SEGMENT(frame)                                               \
   {                                                                            \
     auto segment = TNET_TCP_SEGMENT_FROM_ETHERNET_FRAME(frame);                \
-    printf("TCP SEGMENT\n"                                                     \
+    printf("\nTCP SEGMENT\n"                                                   \
            "Source port: %d\n"                                                 \
            "Dest port: %d\n"                                                   \
            "Sequence: %d\n"                                                    \
@@ -46,9 +46,39 @@
            ntohs(segment.checksum), ntohs(segment.urgent));                    \
   }
 
+#define DEBUG_IPv4_PACKET(frame)                                               \
+  {                                                                            \
+    auto ipPacket = TNET_IPv4_PACKET_FROM_ETHERNET_FRAME(frame);               \
+    printf("\nIPv4 PACKET\n"                                                   \
+           "Version: %d\n"                                                     \
+           "Header length: %d\n"                                               \
+           "Type of service: %d\n"                                             \
+           "Length: %u\n"                                                      \
+           "Id: %u\n"                                                          \
+           "Flags: %d\n"                                                       \
+           "Fragment offset: %u\n"                                             \
+           "Time to live: %d\n"                                                \
+           "Protocol: %d\n"                                                    \
+           "Checksum: %u\n"                                                    \
+           "Source address: %d.%d.%d.%d\n"                                     \
+           "Dest address: %d.%d.%d.%d\n",                                      \
+           ipPacket.version, ipPacket.length, ipPacket.typeOfService,          \
+           ntohs(ipPacket.totalLength), ntohs(ipPacket.identification),        \
+           ipPacket.flags, ipPacket.fragmentOffset, ipPacket.timeToLive,       \
+           ipPacket.protocol, ntohs(ipPacket.checksum),                        \
+           ipPacket.sourceIPAddress & 0xff,                                    \
+           (ipPacket.sourceIPAddress >> 8) & 0xff,                             \
+           (ipPacket.sourceIPAddress >> 16) & 0xff,                            \
+           (ipPacket.sourceIPAddress >> 24) & 0xff,                            \
+           ipPacket.destIPAddress & 0xff,                                      \
+           (ipPacket.destIPAddress >> 8) & 0xff,                               \
+           (ipPacket.destIPAddress >> 16) & 0xff,                              \
+           (ipPacket.destIPAddress >> 24) & 0xff);                             \
+  }
+
 #define DEBUG_ARP_PACKET(arpPacket)                                            \
   printf(                                                                      \
-      "ARP PACKET\n"                                                           \
+      "\nARP PACKET\n"                                                         \
       "Hardware type: %#06x\n"                                                 \
       "Protocol type: %#06x\n"                                                 \
       "Hardware address length: %d\n"                                          \
@@ -154,7 +184,7 @@ uint16_t tcp_checksum(uint8_t *data, uint16_t len) {
 
 #define TNET_TCP_SEGMENT_FROM_ETHERNET_FRAME(frame)                            \
   (*(TNET_TCPSegmentHeader *)(void *)&frame                                    \
-        ->payload[TNET_IPv4_PACKET_FROM_ETHERNET_FRAME(frame).length])
+        ->payload[TNET_IPv4_PACKET_FROM_ETHERNET_FRAME(frame).length * 4])
 
 typedef enum {
   TNET_TCP_STATE_CLOSED,
@@ -326,6 +356,12 @@ void TNET_tcpSynAck(TNET_TCPIPv4Connection *conn, TNET_EthernetFrame *frame) {
  * sizeof(msg)); */
 /* } */
 
+void TNET_tcpFixSegmentByteOrder(segment *TNET_TCPSegmentHeader) {
+  uint16_t twoBytes;
+  memcpy(&twoBytes, segment.dataOffset, 2);
+  memcpy(&segment.dataOffset, ntohs(twoBytes), 2);
+}
+
 void TNET_tcpSend(TNET_TCPIPv4Connection *conn, TNET_EthernetFrame *frame) {
   TNET_TCPSegmentHeader segmentHeader =
       TNET_TCP_SEGMENT_FROM_ETHERNET_FRAME(frame);
@@ -368,8 +404,6 @@ void TNET_arpRespond(int sock, TNET_EthernetFrame *frame) {
   memcpy(outPacket.destHardwareAddress, packet.sourceHardwareAddress, 6);
   outPacket.destProtocolAddress = packet.sourceProtocolAddress;
 
-  DEBUG_ARP_PACKET(outPacket);
-
   TNET_ethSend(sock, frame, TNET_ETHERNET_TYPE_ARP, (uint8_t *)&outPacket,
                sizeof(outPacket));
 }
@@ -404,7 +438,17 @@ void TNET_tcpServe(int sock) {
       continue;
     }
 
-    DEBUG_SEGMENT(frame);
+    auto ipPacket = TNET_IPv4_PACKET_FROM_ETHERNET_FRAME(frame);
+    printf("TNET: Received packet version %d, protocol %d\n", ipPacket.version,
+           ipPacket.protocol);
+
+    if (ipPacket.version != 4 || ipPacket.protocol != TNET_IP_TYPE_TCP) {
+      DEBUG("Dropping packet");
+      continue;
+    }
+
+    DEBUG_IPv4_PACKET(frame);
+    DEBUG_TCP_SEGMENT(frame);
 
     conn = TNET_tcpGetConnection(frame);
     if (conn == NULL) {

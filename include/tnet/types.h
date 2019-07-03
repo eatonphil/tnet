@@ -38,9 +38,11 @@ typedef struct __attribute__((__packed__)) {
   uint32_t destProtocolAddress;
 } TNET_ARPPacket;
 
+const uint16_t TNET_IP_TYPE_TCP = 6;
+
 typedef struct __attribute__((__packed__)) {
-  uint8_t version : 4;
   uint8_t length : 4;
+  uint8_t version : 4;
   uint8_t typeOfService;
   uint16_t totalLength;
   uint16_t identification;

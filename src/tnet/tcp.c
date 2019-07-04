@@ -1,14 +1,16 @@
-#include <arpa/inet.h>
 #include <errno.h>
-#include <netinet/in.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/ioctl.h>
 #include <time.h>
 #include <unistd.h>
+
+#include <arpa/inet.h>
+#include <net/route.h>
+#include <netinet/in.h>
+#include <sys/ioctl.h>
 
 #include "tnet/tcp.h"
 #include "tnet/types.h"
@@ -18,13 +20,15 @@
 #define DEBUG_TCP_SEGMENT(frame)                                               \
   {                                                                            \
     auto segment = TNET_TCP_SEGMENT_FROM_ETHERNET_FRAME(frame);                \
-    printf("\nTCP SEGMENT\n"                                                   \
+    printf("TCP SEGMENT\n"                                                     \
            "Source port: %d\n"                                                 \
            "Dest port: %d\n"                                                   \
            "Sequence: %d\n"                                                    \
            "Ack: %d\n"                                                         \
            "Offset: %d\n"                                                      \
            "Reserved: %d\n"                                                    \
+           "Flag[cwr]: %s\n"                                                   \
+           "Flag[ece]: %s\n"                                                   \
            "Flag[urg]: %s\n"                                                   \
            "Flag[ack]: %s\n"                                                   \
            "Flag[psh]: %s\n"                                                   \
@@ -33,11 +37,13 @@
            "Flag[fin]: %s\n"                                                   \
            "Window size: %d\n"                                                 \
            "Checksum: %d\n"                                                    \
-           "Urgent: %d\n",                                                     \
+           "Urgent: %d\n\n",                                                   \
            ntohs(segment.sourcePort), ntohs(segment.destPort),                 \
            ntohl(segment.sequenceNumber), ntohl(segment.ackNumber),            \
            TNET_TCP_SEGMENT_DATA_OFFSET(segment),                              \
            TNET_TCP_SEGMENT_RESERVED(segment),                                 \
+           TNET_TCP_SEGMENT_CWR_FLAG(segment) ? "true" : "false",              \
+           TNET_TCP_SEGMENT_ECE_FLAG(segment) ? "true" : "false",              \
            TNET_TCP_SEGMENT_URG_FLAG(segment) ? "true" : "false",              \
            TNET_TCP_SEGMENT_ACK_FLAG(segment) ? "true" : "false",              \
            TNET_TCP_SEGMENT_PSH_FLAG(segment) ? "true" : "false",              \
@@ -51,7 +57,7 @@
 #define DEBUG_IPv4_PACKET(frame)                                               \
   {                                                                            \
     auto ipPacket = TNET_IPv4_PACKET_FROM_ETHERNET_FRAME(frame);               \
-    printf("\nIPv4 PACKET\n"                                                   \
+    printf("IPv4 PACKET\n"                                                     \
            "Version: %d\n"                                                     \
            "Header length: %d\n"                                               \
            "Type of service: %d\n"                                             \
@@ -62,7 +68,7 @@
            "Protocol: %d\n"                                                    \
            "Checksum: %u\n"                                                    \
            "Source address: %d.%d.%d.%d\n"                                     \
-           "Dest address: %d.%d.%d.%d\n",                                      \
+           "Dest address: %d.%d.%d.%d\n\n",                                    \
            TNET_IPv4_PACKET_VERSION(ipPacket),                                 \
            TNET_IPv4_PACKET_LENGTH(ipPacket), ipPacket.typeOfService,          \
            ntohs(ipPacket.totalLength), ntohs(ipPacket.identification),        \
@@ -80,7 +86,7 @@
 
 #define DEBUG_ARP_PACKET(arpPacket)                                            \
   printf(                                                                      \
-      "\nARP PACKET\n"                                                         \
+      "ARP PACKET\n"                                                           \
       "Hardware type: %#06x\n"                                                 \
       "Protocol type: %#06x\n"                                                 \
       "Hardware address length: %d\n"                                          \
@@ -89,7 +95,7 @@
       "Source hardware address: %02x:%02x:%02x:%02x:%02x:%02x\n"               \
       "Source protocol address: %d.%d.%d.%d\n"                                 \
       "Dest hardware address: %02x:%02x:%02x:%02x:%02x:%02x\n"                 \
-      "Dest protocol address: %d.%d.%d.%d\n",                                  \
+      "Dest protocol address: %d.%d.%d.%d\n\n",                                \
       ntohs(arpPacket.hardwareType), ntohs(arpPacket.protocolType),            \
       arpPacket.hardwareAddressLength, arpPacket.protocolAddressLength,        \
       ntohs(arpPacket.operation), arpPacket.sourceHardwareAddress[0],          \
@@ -193,40 +199,41 @@ uint16_t tcp_checksum(uint8_t *data, uint16_t len) {
   (*((TNET_IPv4PacketHeader *)(void *)&frame->payload))
 
 #define TNET_TCP_SEGMENT_DATA_OFFSET(segment)                                  \
-  ((segment.offsetAndFlags >> 8) & 0b1111)
+  ((segment.offsetAndFlags >> 4) & 0b1111)
 #define TNET_TCP_SEGMENT_SET_DATA_OFFSET(segment, offset)                      \
-  segment.offsetAndFlags |= (offset << 8) & 0b1111
-#define TNET_TCP_SEGMENT_RESERVED(segment)                                     \
-  ((segment.offsetAndFlags >> 12) & 0b111)
+  segment.offsetAndFlags |= (offset << 4) & 0b1111
+#define TNET_TCP_SEGMENT_RESERVED(segment) (segment.offsetAndFlags & 0b1111)
 #define TNET_TCP_SEGMENT_SET_RESERVED(segment, reserved)                       \
-  segment.offsetAndFlags |= (reserved << 12) & 0b111
-#define TNET_TCP_SEGMENT_NS_FLAG(segment) ((segment.offsetAndFlags >> 15) & 0b1)
-#define TNET_TCP_SEGMENT_SET_NS_FLAG(segment, ns)                              \
-  segment.offsetAndFlags |= (ns << 15) & 0b1
-#define TNET_TCP_SEGMENT_CWR_FLAG(segment) (segment.offsetAndFlags & 0b1)
+  segment.offsetAndFlags |= reserved & 0b1111
+#define TNET_TCP_SEGMENT_CWR_FLAG(segment)                                     \
+  ((segment.offsetAndFlags << 15) & 0b1)
 #define TNET_TCP_SEGMENT_SET_CWR_FLAG(segment, cwr)                            \
-  segment.offsetAndFlags |= cwr & 0b1
-#define TNET_TCP_SEGMENT_ECE_FLAG(segment) ((segment.offsetAndFlags >> 1) & 0b1)
+  segment.offsetAndFlags |= (cwr << 15) & 0b1
+#define TNET_TCP_SEGMENT_ECE_FLAG(segment)                                     \
+  ((segment.offsetAndFlags >> 14) & 0b1)
 #define TNET_TCP_SEGMENT_SET_ECE_FLAG(segment, ece)                            \
-  segment.offsetAndFlags |= (ece << 1) & 0b1
-#define TNET_TCP_SEGMENT_URG_FLAG(segment) ((segment.offsetAndFlags >> 2) & 0b1)
+  segment.offsetAndFlags |= (ece << 14) & 0b1
+#define TNET_TCP_SEGMENT_URG_FLAG(segment)                                     \
+  ((segment.offsetAndFlags >> 13) & 0b1)
 #define TNET_TCP_SEGMENT_SET_URG_FLAG(segment, urg)                            \
-  segment.offsetAndFlags |= (urg << 2) & 0b1
-#define TNET_TCP_SEGMENT_ACK_FLAG(segment) ((segment.offsetAndFlags >> 3) & 0b1)
+  segment.offsetAndFlags |= (urg << 13) & 0b1
+#define TNET_TCP_SEGMENT_ACK_FLAG(segment)                                     \
+  ((segment.offsetAndFlags >> 12) & 0b1)
 #define TNET_TCP_SEGMENT_SET_ACK_FLAG(segment, ack)                            \
-  segment.offsetAndFlags |= (ack << 3) & 0b1
-#define TNET_TCP_SEGMENT_PSH_FLAG(segment) (segment.offsetAndFlags >> 4) & 0b1
+  segment.offsetAndFlags |= (ack << 12) & 0b1
+#define TNET_TCP_SEGMENT_PSH_FLAG(segment) (segment.offsetAndFlags >> 11) & 0b1
 #define TNET_TCP_SEGMENT_SET_PSH_FLAG(segment, psh)                            \
-  segment.offsetAndFlags |= (psh << 4) & 0b1
-#define TNET_TCP_SEGMENT_RST_FLAG(segment) ((segment.offsetAndFlags >> 5) & 0b1)
+  segment.offsetAndFlags |= (psh << 11) & 0b1
+#define TNET_TCP_SEGMENT_RST_FLAG(segment)                                     \
+  ((segment.offsetAndFlags >> 10) & 0b1)
 #define TNET_TCP_SEGMENT_SET_RST_FLAG(segment, rst)                            \
-  segment.offsetAndFlags |= (rst << 5) & 0b1
-#define TNET_TCP_SEGMENT_SYN_FLAG(segment) ((segment.offsetAndFlags >> 6) & 0b1)
+  segment.offsetAndFlags |= (rst << 10) & 0b1
+#define TNET_TCP_SEGMENT_SYN_FLAG(segment) ((segment.offsetAndFlags >> 9) & 0b1)
 #define TNET_TCP_SEGMENT_SET_SYN_FLAG(segment, syn)                            \
-  segment.offsetAndFlags |= (syn << 6) & 0b1
-#define TNET_TCP_SEGMENT_FIN_FLAG(segment) ((segment.offsetAndFlags >> 7) & 0b1)
+  segment.offsetAndFlags |= (syn << 9) & 0b1
+#define TNET_TCP_SEGMENT_FIN_FLAG(segment) ((segment.offsetAndFlags >> 8) & 0b1)
 #define TNET_TCP_SEGMENT_SET_FLAG_FLAG(segment, flag)                          \
-  segment.offsetAndFlags |= (flag << 7) & 0b1
+  segment.offsetAndFlags |= (flag << 8) & 0b1
 
 #define TNET_TCP_SEGMENT_FROM_ETHERNET_FRAME(frame)                            \
   (*(TNET_TCPSegmentHeader *)(void *)&frame                                    \
@@ -316,7 +323,7 @@ TNET_TCPIPv4Connection *TNET_tcpNewConnection(TNET_EthernetFrame *frame,
 
 void TNET_ethSend(int sock, TNET_EthernetFrame *frame, uint16_t type,
                   uint8_t *msg, int msgLen) {
-  TNET_EthernetFrame outFrame;
+  TNET_EthernetFrame outFrame = {0};
   memcpy(outFrame.destMACAddress, frame->sourceMACAddress,
          sizeof(TNET_TCPIPv4Connections.mac));
   memcpy(outFrame.sourceMACAddress, TNET_TCPIPv4Connections.mac,
@@ -329,6 +336,14 @@ void TNET_ethSend(int sock, TNET_EthernetFrame *frame, uint16_t type,
   uint32_t crc;
   crc32((uint8_t *)&outFrame, frameLength, &crc);
   outFrame.frameCheckSequence = htonl(crc);
+
+  if (type == TNET_ETHERNET_TYPE_IPv4) {
+    DEBUG("Sending TCP segment:");
+    DEBUG_TCP_SEGMENT((&outFrame));
+
+    DEBUG("Sending IPv4 packet:");
+    DEBUG_IPv4_PACKET((&outFrame));
+  }
 
   write(sock, (uint8_t *)&outFrame, frameLength);
 }
@@ -343,14 +358,16 @@ void TNET_ipv4Send(TNET_TCPIPv4Connection *conn, TNET_EthernetFrame *frame,
   uint8_t payload[TNET_SS] = {0};
 
   TNET_IPv4_PACKET_SET_VERSION(outPacketHeader, 4);
-  TNET_IPv4_PACKET_SET_LENGTH(outPacketHeader, 32);
-  outPacketHeader.totalLength = htonl(32 + 60 + msgLen);
+  // Expressed in 32-bit words
+  TNET_IPv4_PACKET_SET_LENGTH(outPacketHeader, 8);
+  outPacketHeader.totalLength = htons(32 + msgLen);
   outPacketHeader.sourceIPAddress = packetHeader.destIPAddress;
   outPacketHeader.destIPAddress = packetHeader.sourceIPAddress;
   outPacketHeader.protocol = 0x2;
-  outPacketHeader.checksum =
-      ip_checksum(&outPacketHeader, outPacketHeader.totalLength);
-  memcpy(payload, &outPacketHeader, outPacketHeader.totalLength);
+  // Expressed in 32-bit words
+  int packetOffset = TNET_IPv4_PACKET_LENGTH(outPacketHeader) * 4;
+  outPacketHeader.checksum = ip_checksum(&outPacketHeader, packetOffset);
+  memcpy(payload + packetOffset, msg, msgLen);
 
   TNET_ethSend(conn->sock, frame, TNET_ETHERNET_TYPE_IPv4, payload, TNET_SS);
 }
@@ -565,6 +582,25 @@ int TNET_tcpInit(int count, char ifname[IFNAMSIZ]) {
   }
 
   TNET_TCPIPv4Connections.ip = sai.sin_addr.s_addr;
+
+  // Set gateway
+  struct rtentry route = {0};
+  route.rt_flags = RTF_UP | RTF_GATEWAY;
+  route.rt_dev = ifname;
+  struct sockaddr_in *addr = (struct sockaddr_in *)&route.rt_gateway;
+  addr->sin_family = AF_INET;
+  addr->sin_addr.s_addr = inet_addr("192.168.2.1");
+  addr = (struct sockaddr_in *)&route.rt_dst;
+  addr->sin_family = AF_INET;
+  addr->sin_addr.s_addr = INADDR_ANY;
+  addr = (struct sockaddr_in *)&route.rt_genmask;
+  addr->sin_family = AF_INET;
+  addr->sin_addr.s_addr = INADDR_ANY;
+
+  if (ioctl(querySock, SIOCADDRT, &route) < 0) {
+    DEBUG("Bad ioctl request to set gateway");
+    return 1;
+  }
 
   srand(time(NULL));
 

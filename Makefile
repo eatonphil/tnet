@@ -1,6 +1,6 @@
 bin/tnet: src/tnet/*.c include/tnet/*.h
 	mkdir -p bin
-	g++ -std=c++17 -I./include -Wall -Werror -o $@ src/tnet/*.c
+	g++ -rdynamic -std=c++17 -I./include -Wall -Werror -o $@ src/tnet/*.c
 
 dev:
 	docker build -t tnet .

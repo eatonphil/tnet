@@ -12,14 +12,7 @@ typedef struct __attribute__((__packed__)) {
   uint16_t destPort;
   uint32_t sequenceNumber;
   uint32_t ackNumber;
-  uint16_t dataOffset : 4;
-  uint16_t reserved : 6;
-  uint16_t urgFlag : 1;
-  uint16_t ackFlag : 1;
-  uint16_t pshFlag : 1;
-  uint16_t rstFlag : 1;
-  uint16_t synFlag : 1;
-  uint16_t finFlag : 1;
+  uint16_t offsetAndFlags;
   uint16_t windowSize;
   uint16_t checksum;
   uint16_t urgent;
@@ -41,13 +34,11 @@ typedef struct __attribute__((__packed__)) {
 const uint16_t TNET_IP_TYPE_TCP = 6;
 
 typedef struct __attribute__((__packed__)) {
-  uint8_t length : 4;
-  uint8_t version : 4;
+  uint8_t versionAndLength;
   uint8_t typeOfService;
   uint16_t totalLength;
   uint16_t identification;
-  uint16_t flags : 3;
-  uint16_t fragmentOffset : 13;
+  uint16_t flagsAndFragmentOffset;
   uint8_t timeToLive;
   uint8_t protocol;
   uint16_t checksum;

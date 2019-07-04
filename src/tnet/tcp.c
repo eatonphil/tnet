@@ -36,14 +36,16 @@
            "Urgent: %d\n",                                                     \
            ntohs(segment.sourcePort), ntohs(segment.destPort),                 \
            ntohl(segment.sequenceNumber), ntohl(segment.ackNumber),            \
-           ntohs(segment.dataOffset), ntohs(segment.reserved),                 \
-           segment.urgFlag ? "true" : "false",                                 \
-           segment.ackFlag ? "true" : "false",                                 \
-           segment.pshFlag ? "true" : "false",                                 \
-           segment.rstFlag ? "true" : "false",                                 \
-           segment.synFlag ? "true" : "false",                                 \
-           segment.finFlag ? "true" : "false", ntohs(segment.windowSize),      \
-           ntohs(segment.checksum), ntohs(segment.urgent));                    \
+           TNET_TCP_SEGMENT_DATA_OFFSET(segment),                              \
+           TNET_TCP_SEGMENT_RESERVED(segment),                                 \
+           TNET_TCP_SEGMENT_URG_FLAG(segment) ? "true" : "false",              \
+           TNET_TCP_SEGMENT_ACK_FLAG(segment) ? "true" : "false",              \
+           TNET_TCP_SEGMENT_PSH_FLAG(segment) ? "true" : "false",              \
+           TNET_TCP_SEGMENT_RST_FLAG(segment) ? "true" : "false",              \
+           TNET_TCP_SEGMENT_SYN_FLAG(segment) ? "true" : "false",              \
+           TNET_TCP_SEGMENT_FIN_FLAG(segment) ? "true" : "false",              \
+           ntohs(segment.windowSize), ntohs(segment.checksum),                 \
+           ntohs(segment.urgent));                                             \
   }
 
 #define DEBUG_IPv4_PACKET(frame)                                               \
@@ -55,16 +57,16 @@
            "Type of service: %d\n"                                             \
            "Length: %u\n"                                                      \
            "Id: %u\n"                                                          \
-           "Flags: %d\n"                                                       \
-           "Fragment offset: %u\n"                                             \
+           "Flags and fragment offset: %0x02\n"                                \
            "Time to live: %d\n"                                                \
            "Protocol: %d\n"                                                    \
            "Checksum: %u\n"                                                    \
            "Source address: %d.%d.%d.%d\n"                                     \
            "Dest address: %d.%d.%d.%d\n",                                      \
-           ipPacket.version, ipPacket.length, ipPacket.typeOfService,          \
+           TNET_IPv4_PACKET_VERSION(ipPacket),                                 \
+           TNET_IPv4_PACKET_LENGTH(ipPacket), ipPacket.typeOfService,          \
            ntohs(ipPacket.totalLength), ntohs(ipPacket.identification),        \
-           ipPacket.flags, ipPacket.fragmentOffset, ipPacket.timeToLive,       \
+           ntohs(ipPacket.flagsAndFragmentOffset), ipPacket.timeToLive,        \
            ipPacket.protocol, ntohs(ipPacket.checksum),                        \
            ipPacket.sourceIPAddress & 0xff,                                    \
            (ipPacket.sourceIPAddress >> 8) & 0xff,                             \
@@ -179,12 +181,58 @@ uint16_t tcp_checksum(uint8_t *data, uint16_t len) {
 #define TNET_ARP_PACKET_FROM_ETHERNET_FRAME(frame)                             \
   (*((TNET_ARPPacket *)(void *)&frame->payload))
 
+#define TNET_IPv4_PACKET_LENGTH(packet) (packet.versionAndLength & 0b1111)
+#define TNET_IPv4_PACKET_SET_LENGTH(packet, length)                            \
+  packet.versionAndLength |= length & 0b1111
+#define TNET_IPv4_PACKET_VERSION(packet)                                       \
+  ((packet.versionAndLength >> 4) & 0b1111)
+#define TNET_IPv4_PACKET_SET_VERSION(packet, version)                          \
+  packet.versionAndLength |= (version << 4) & 0b1111
+
 #define TNET_IPv4_PACKET_FROM_ETHERNET_FRAME(frame)                            \
   (*((TNET_IPv4PacketHeader *)(void *)&frame->payload))
 
+#define TNET_TCP_SEGMENT_DATA_OFFSET(segment)                                  \
+  ((segment.offsetAndFlags >> 8) & 0b1111)
+#define TNET_TCP_SEGMENT_SET_DATA_OFFSET(segment, offset)                      \
+  segment.offsetAndFlags |= (offset << 8) & 0b1111
+#define TNET_TCP_SEGMENT_RESERVED(segment)                                     \
+  ((segment.offsetAndFlags >> 12) & 0b111)
+#define TNET_TCP_SEGMENT_SET_RESERVED(segment, reserved)                       \
+  segment.offsetAndFlags |= (reserved << 12) & 0b111
+#define TNET_TCP_SEGMENT_NS_FLAG(segment) ((segment.offsetAndFlags >> 15) & 0b1)
+#define TNET_TCP_SEGMENT_SET_NS_FLAG(segment, ns)                              \
+  segment.offsetAndFlags |= (ns << 15) & 0b1
+#define TNET_TCP_SEGMENT_CWR_FLAG(segment) (segment.offsetAndFlags & 0b1)
+#define TNET_TCP_SEGMENT_SET_CWR_FLAG(segment, cwr)                            \
+  segment.offsetAndFlags |= cwr & 0b1
+#define TNET_TCP_SEGMENT_ECE_FLAG(segment) ((segment.offsetAndFlags >> 1) & 0b1)
+#define TNET_TCP_SEGMENT_SET_ECE_FLAG(segment, ece)                            \
+  segment.offsetAndFlags |= (ece << 1) & 0b1
+#define TNET_TCP_SEGMENT_URG_FLAG(segment) ((segment.offsetAndFlags >> 2) & 0b1)
+#define TNET_TCP_SEGMENT_SET_URG_FLAG(segment, urg)                            \
+  segment.offsetAndFlags |= (urg << 2) & 0b1
+#define TNET_TCP_SEGMENT_ACK_FLAG(segment) ((segment.offsetAndFlags >> 3) & 0b1)
+#define TNET_TCP_SEGMENT_SET_ACK_FLAG(segment, ack)                            \
+  segment.offsetAndFlags |= (ack << 3) & 0b1
+#define TNET_TCP_SEGMENT_PSH_FLAG(segment) (segment.offsetAndFlags >> 4) & 0b1
+#define TNET_TCP_SEGMENT_SET_PSH_FLAG(segment, psh)                            \
+  segment.offsetAndFlags |= (psh << 4) & 0b1
+#define TNET_TCP_SEGMENT_RST_FLAG(segment) ((segment.offsetAndFlags >> 5) & 0b1)
+#define TNET_TCP_SEGMENT_SET_RST_FLAG(segment, rst)                            \
+  segment.offsetAndFlags |= (rst << 5) & 0b1
+#define TNET_TCP_SEGMENT_SYN_FLAG(segment) ((segment.offsetAndFlags >> 6) & 0b1)
+#define TNET_TCP_SEGMENT_SET_SYN_FLAG(segment, syn)                            \
+  segment.offsetAndFlags |= (syn << 6) & 0b1
+#define TNET_TCP_SEGMENT_FIN_FLAG(segment) ((segment.offsetAndFlags >> 7) & 0b1)
+#define TNET_TCP_SEGMENT_SET_FLAG_FLAG(segment, flag)                          \
+  segment.offsetAndFlags |= (flag << 7) & 0b1
+
 #define TNET_TCP_SEGMENT_FROM_ETHERNET_FRAME(frame)                            \
   (*(TNET_TCPSegmentHeader *)(void *)&frame                                    \
-        ->payload[TNET_IPv4_PACKET_FROM_ETHERNET_FRAME(frame).length * 4])
+        ->payload[TNET_IPv4_PACKET_LENGTH(                                     \
+                      TNET_IPv4_PACKET_FROM_ETHERNET_FRAME(frame)) *           \
+                  4])
 
 typedef enum {
   TNET_TCP_STATE_CLOSED,
@@ -291,10 +339,11 @@ void TNET_ipv4Send(TNET_TCPIPv4Connection *conn, TNET_EthernetFrame *frame,
   TNET_IPv4PacketHeader packetHeader =
       TNET_IPv4_PACKET_FROM_ETHERNET_FRAME(frame);
 
-  TNET_IPv4PacketHeader outPacketHeader;
+  TNET_IPv4PacketHeader outPacketHeader = {0};
   uint8_t payload[TNET_SS] = {0};
 
-  outPacketHeader.length = htonl(32);
+  TNET_IPv4_PACKET_SET_VERSION(outPacketHeader, 4);
+  TNET_IPv4_PACKET_SET_LENGTH(outPacketHeader, 32);
   outPacketHeader.totalLength = htonl(32 + 60 + msgLen);
   outPacketHeader.sourceIPAddress = packetHeader.destIPAddress;
   outPacketHeader.destIPAddress = packetHeader.sourceIPAddress;
@@ -310,7 +359,7 @@ void TNET_tcpSynAck(TNET_TCPIPv4Connection *conn, TNET_EthernetFrame *frame) {
   TNET_TCPSegmentHeader segmentHeader =
       TNET_TCP_SEGMENT_FROM_ETHERNET_FRAME(frame);
 
-  TNET_TCPSegmentHeader outSegmentHeader;
+  TNET_TCPSegmentHeader outSegmentHeader = {0};
 
   uint8_t msg[] = "HTTP/1.1 200 OK\r\n\r\n<h1>Hello world!</h1>";
 
@@ -319,12 +368,12 @@ void TNET_tcpSynAck(TNET_TCPIPv4Connection *conn, TNET_EthernetFrame *frame) {
   outSegmentHeader.destPort = segmentHeader.sourcePort;
   outSegmentHeader.ackNumber = htonl(ntohl(segmentHeader.sequenceNumber) + 1);
   outSegmentHeader.sequenceNumber = htonl(conn->sequenceNumber);
-  outSegmentHeader.ackFlag = 1;
-  outSegmentHeader.synFlag = 1;
+  TNET_TCP_SEGMENT_SET_ACK_FLAG(outSegmentHeader, 1);
+  TNET_TCP_SEGMENT_SET_SYN_FLAG(outSegmentHeader, 1);
   outSegmentHeader.windowSize = segmentHeader.windowSize;
   outSegmentHeader.checksum =
       tcp_checksum((uint8_t *)&outSegmentHeader, 60 + sizeof(msg));
-  outSegmentHeader.dataOffset = htonl(60);
+  TNET_TCP_SEGMENT_SET_DATA_OFFSET(outSegmentHeader, 60);
 
   TNET_ipv4Send(conn, frame, &outSegmentHeader, msg, sizeof(msg));
 }
@@ -356,17 +405,11 @@ void TNET_tcpSynAck(TNET_TCPIPv4Connection *conn, TNET_EthernetFrame *frame) {
  * sizeof(msg)); */
 /* } */
 
-void TNET_tcpFixSegmentByteOrder(segment *TNET_TCPSegmentHeader) {
-  uint16_t twoBytes;
-  memcpy(&twoBytes, segment.dataOffset, 2);
-  memcpy(&segment.dataOffset, ntohs(twoBytes), 2);
-}
-
 void TNET_tcpSend(TNET_TCPIPv4Connection *conn, TNET_EthernetFrame *frame) {
   TNET_TCPSegmentHeader segmentHeader =
       TNET_TCP_SEGMENT_FROM_ETHERNET_FRAME(frame);
 
-  TNET_TCPSegmentHeader outSegmentHeader;
+  TNET_TCPSegmentHeader outSegmentHeader = {0};
 
   uint8_t msg[] = "HTTP/1.1 200 OK\r\n\r\n<h1>Hello world!</h1>";
 
@@ -374,11 +417,11 @@ void TNET_tcpSend(TNET_TCPIPv4Connection *conn, TNET_EthernetFrame *frame) {
   outSegmentHeader.sourcePort = segmentHeader.destPort;
   outSegmentHeader.destPort = segmentHeader.sourcePort;
   outSegmentHeader.sequenceNumber = htonl(conn->sequenceNumber++);
-  outSegmentHeader.ackFlag = 1;
+  TNET_TCP_SEGMENT_SET_ACK_FLAG(outSegmentHeader, 1);
   outSegmentHeader.windowSize = segmentHeader.windowSize;
   outSegmentHeader.checksum =
       tcp_checksum((uint8_t *)&outSegmentHeader, 60 + sizeof(msg));
-  outSegmentHeader.dataOffset = htonl(60);
+  TNET_TCP_SEGMENT_SET_DATA_OFFSET(outSegmentHeader, 60);
 
   TNET_ipv4Send(conn, frame, &outSegmentHeader, msg, sizeof(msg));
 }
@@ -439,10 +482,11 @@ void TNET_tcpServe(int sock) {
     }
 
     auto ipPacket = TNET_IPv4_PACKET_FROM_ETHERNET_FRAME(frame);
-    printf("TNET: Received packet version %d, protocol %d\n", ipPacket.version,
-           ipPacket.protocol);
+    printf("TNET: Received packet version %d, protocol %d\n",
+           TNET_IPv4_PACKET_VERSION(ipPacket), ipPacket.protocol);
 
-    if (ipPacket.version != 4 || ipPacket.protocol != TNET_IP_TYPE_TCP) {
+    if (TNET_IPv4_PACKET_VERSION(ipPacket) != 4 ||
+        ipPacket.protocol != TNET_IP_TYPE_TCP) {
       DEBUG("Dropping packet");
       continue;
     }

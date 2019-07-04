@@ -3,21 +3,18 @@
 
 #include <stdint.h>
 
-const int TNET_PS = 1480;
-const int TNET_SS = 1500;
-const int TNET_FS = TNET_SS + 18;
+const uint16_t TNET_ETHERNET_TYPE_IPv4 = 0x0800;
+const uint16_t TNET_ETHERNET_TYPE_ARP = 0x0806;
+
+const int TNET_ETHERNET_PAYLOAD_SIZE = 1500;
 
 typedef struct __attribute__((__packed__)) {
-  uint16_t sourcePort;
-  uint16_t destPort;
-  uint32_t sequenceNumber;
-  uint32_t ackNumber;
-  uint16_t offsetAndFlags;
-  uint16_t windowSize;
-  uint16_t checksum;
-  uint16_t urgent;
-  uint8_t options[40];
-} TNET_TCPSegmentHeader;
+  uint8_t destMACAddress[6];
+  uint8_t sourceMACAddress[6];
+  uint16_t type;
+  uint8_t payload[TNET_ETHERNET_PAYLOAD_SIZE];
+  uint32_t frameCheckSequence;
+} TNET_EthernetFrame;
 
 typedef struct __attribute__((__packed__)) {
   uint16_t hardwareType;
@@ -47,15 +44,22 @@ typedef struct __attribute__((__packed__)) {
   uint8_t options[12];
 } TNET_IPv4PacketHeader;
 
-const uint16_t TNET_ETHERNET_TYPE_IPv4 = 0x0800;
-const uint16_t TNET_ETHERNET_TYPE_ARP = 0x0806;
+const int TNET_IP_PAYLOAD_SIZE =
+    TNET_ETHERNET_PAYLOAD_SIZE - sizeof(TNET_IPv4PacketHeader);
 
 typedef struct __attribute__((__packed__)) {
-  uint8_t destMACAddress[6];
-  uint8_t sourceMACAddress[6];
-  uint16_t type;
-  uint8_t payload[TNET_SS];
-  uint32_t frameCheckSequence;
-} TNET_EthernetFrame;
+  uint16_t sourcePort;
+  uint16_t destPort;
+  uint32_t sequenceNumber;
+  uint32_t ackNumber;
+  uint16_t offsetAndFlags;
+  uint16_t windowSize;
+  uint16_t checksum;
+  uint16_t urgent;
+  uint8_t options[40];
+} TNET_TCPSegmentHeader;
+
+const int TNET_TCP_PAYLOAD_SIZE =
+    TNET_IP_PAYLOAD_SIZE - sizeof(TNET_TCPSegmentHeader);
 
 #endif

@@ -34,24 +34,27 @@ int main() {
     return 1;
   }
 
-  int tap;
-  char ifname[IFNAMSIZ];
-  int err = TNET_tapInit(&tap, ifname);
-  if (err != 0) {
+  TNET_tapdevice_Tapdevice tapdevice;
+  uint32_t address = inet_addr("192.168.2.3");
+  uint32_t gateway = inet_addr("192.168.2.1");
+  int error = TNET_tapdevice_Tapdevice_Init(&tapdevice, address, gateway);
+  if (error != 0) {
     printf("TNET: Error initializing TAP device.\n");
     return err;
   }
 
+  TNET_network_Network network;
   int nConnections = 2;
-  err = TNET_tcpInit(nConnections, ifname);
-  if (err != 0) {
+  error = TNET_network_Network_Init(&network, &tapdevice, nConnections);
+  if (error != 0) {
     printf("TNET: Error initializing TCP/IP stack.\n");
     return err;
   }
 
-  TNET_tcpServe(tap);
+  network.Serve(&network);
 
-  TNET_tapCleanup(tap);
+  network.Cleanup(&network);
+  tapdevice.Cleanup(&tapdevice);
 
   return 0;
 }

@@ -12,10 +12,10 @@
 #include <netinet/in.h>
 #include <sys/ioctl.h>
 
+#include "tnet/arp.h"
 #include "tnet/tcp.h"
-#include "tnet/types.h"
 
-#define DEBUG(str) printf("TNET: %s\n", str)
+#define TNET_DEBUG(str) printf("TNET: %s\n", str)
 
 // Source: https://blogs.igalia.com/dpino/2018/06/14/fast-checksum-computation/
 uint16_t checksum(uint8_t *data, uint16_t len) {
@@ -48,59 +48,29 @@ typedef enum {
   TNET_TCP_STATE_ESTABLISHED,
 } TNET_TCPState;
 
-TNET_TCPIPv4Connection *TNET_tcpGetConnection(TNET_EthernetFrame *frame) {
-  TNET_IPv4PacketHeader packetHeader =
-      TNET_IPv4_PACKET_FROM_ETHERNET_FRAME(frame);
-  TNET_TCPSegmentHeader segmentHeader =
-      TNET_TCP_SEGMENT_FROM_ETHERNET_FRAME(frame);
+void TNET_ethSend(int sock, TNET_EthernetFrame *frame, uint16_t type,
+                  uint8_t *msg, int msgLen) {
+  TNET_EthernetFrame outFrame = {0};
+  memcpy(outFrame.destMACAddress, frame->sourceMACAddress,
+         sizeof(TNET_TCPIPv4Connections.mac));
+  memcpy(outFrame.sourceMACAddress, TNET_TCPIPv4Connections.mac,
+         sizeof(TNET_TCPIPv4Connections.mac));
+  outFrame.type = htons(type);
+  memcpy(outFrame.payload, msg, msgLen);
 
-  TNET_TCPIPv4Connection conn;
-  int i = 0;
-  for (; i < network->filled; i++) {
-    conn = network->connections[i];
-    if (conn.sourceIPAddress == packetHeader.sourceIPAddress &&
-        conn.sourcePort == segmentHeader.sourcePort &&
-        conn.destIPAddress == packetHeader.destIPAddress &&
-        conn.destPort == segmentHeader.destPort) {
-      return network->connections + i;
-    }
+  // Calculate checksum
+  int frameLength =
+      sizeof(TNET_EthernetFrame) - TNET_ETHERNET_PAYLOAD_SIZE + msgLen;
+  uint32_t crc = htonl(crc32((uint8_t *)&outFrame, frameLength));
+  memcpy((uint8_t *)&outFrame.payload + msgLen, &crc, sizeof(crc));
+
+  if (type == TNET_ETHERNET_TYPE_IPv4) {
+    DEBUG("Sending TCP segment");
+    DEBUG_TCP_SEGMENT((&outFrame));
+
+    DEBUG("Sending IPv4 packet");
+    DEBUG_IPv4_PACKET((&outFrame));
   }
-
-  if (i != network->count - 1) {
-    return NULL;
-  }
-
-  return NULL;
-}
-
-TNET_TCPIPv4Connection *TNET_tcpNewConnection(TNET_EthernetFrame *frame,
-                                              int sock,
-                                              uint16_t initialSequenceNumber) {
-  int filled = network->filled;
-  int count = network->count;
-  if (filled == count) {
-    return NULL;
-  }
-
-  TNET_IPv4PacketHeader packetHeader =
-      TNET_IPv4_PACKET_FROM_ETHERNET_FRAME(frame);
-  TNET_TCPSegmentHeader segmentHeader =
-      TNET_TCP_SEGMENT_FROM_ETHERNET_FRAME(frame);
-
-  TNET_TCPIPv4Connection conn = {
-      .sock = sock,
-      .state = TNET_TCP_STATE_LISTEN,
-      .sequenceNumber = initialSequenceNumber,
-      .sourceIPAddress = packetHeader.sourceIPAddress,
-      .sourcePort = segmentHeader.sourcePort,
-      .destIPAddress = packetHeader.destIPAddress,
-      .destPort = segmentHeader.destPort,
-  };
-
-  // Store new connection
-  network->connections[network->filled++] = conn;
-
-  return network->connections + filled + 1;
 }
 
 void TNET_ipv4Send(TNET_TCPIPv4Connection *conn, TNET_EthernetFrame *frame,
@@ -211,87 +181,102 @@ void TNET_tcpSend(TNET_TCPIPv4Connection *conn, TNET_EthernetFrame *frame) {
   TNET_ipv4Send(conn, frame, payload, segmentSize);
 }
 
-void TNET_arpRespond(int sock, TNET_EthernetFrame *frame) {
-  TNET_ARPPacket packet = TNET_ARP_PACKET_FROM_ETHERNET_FRAME(frame);
-  TNET_ARPPacket outPacket = {0};
-
+void TNET_network_Network_arpRespond(TNET_network_Network *network,
+                                     TNET_network_ARPPacket *packet,
+                                     TNET_network_ARPPacket *outPacket) {
   if (ntohs(packet.protocolType) != TNET_ETHERNET_TYPE_IPv4) {
-    DEBUG("Dropping non-ipv4 arp request");
+    TNET_DEBUG("Dropping non-ipv4 arp request");
     return;
   }
 
   // Fill out rest
-  outPacket.hardwareType = packet.hardwareType;
-  outPacket.protocolType = packet.protocolType;
-  outPacket.hardwareAddressLength = packet.hardwareAddressLength;
-  outPacket.protocolAddressLength = packet.protocolAddressLength;
-  outPacket.operation = htons(2); // Response
-  memcpy(outPacket.sourceHardwareAddress, network->tapdevice->mac,
-         sizeof(outPacket.sourceHardwareAddress));
-  outPacket.sourceProtocolAddress = packet.destProtocolAddress;
-  memcpy(outPacket.destHardwareAddress, packet.sourceHardwareAddress, 6);
-  outPacket.destProtocolAddress = packet.sourceProtocolAddress;
+  outPacket->hardwareType = packet.hardwareType;
+  outPacket->protocolType = packet.protocolType;
+  outPacket->hardwareAddressLength = packet.hardwareAddressLength;
+  outPacket->protocolAddressLength = packet.protocolAddressLength;
+  outPacket->operation = htons(2); // Response
+  memcpy(outPacket->sourceHardwareAddress, network->tapdevice->mac,
+         sizeof(outPacket->sourceHardwareAddress));
+  outPacket->sourceProtocolAddress = packet.destProtocolAddress;
+  memcpy(outPacket->destHardwareAddress, packet.sourceHardwareAddress, 6);
+  outPacket->destProtocolAddress = packet.sourceProtocolAddress;
+}
 
-  TNET_ethSend(sock, frame, TNET_ETHERNET_TYPE_ARP, (uint8_t *)&outPacket,
-               sizeof(outPacket));
+void TNET_network_Network_serveArp(TNET_network_Network *network,
+                                   TNET_network_EthernetFrame *frame) {
+  TNET_network_ARPPacket arpPacket = {0};
+  TNET_network_ARPPacket arpResponse = {0};
+  arpPacket = TNET_ARP_PACKET_FROM_ETHERNET_FRAME(frame);
+  TNET_DEBUG_ARP_PACKET(packet);
+  TNET_network_Network_arpServe(network, &arpPacket, &arpResponse);
+  TNET_network_Network_ethernetServe(network, &outFrame, &outFrameLength,
+                                     (uint8_t *)&arpResponse,
+                                     sizeof(outPacket));
+  network->tapdevice->write(network->tapdevice, (uint8_t *)&outFrame,
+                            frameLength);
+}
+
+void TNET_network_Network_serveIPv4(TNET_network_Network *network,
+                                    TNET_ethernet_EthernetFrame *frame) {
+  auto ipPacket = TNET_IPv4_PACKET_FROM_ETHERNET_FRAME(frame);
+  printf("TNET: Received packet version %d, protocol %d\n",
+         TNET_IPv4_PACKET_VERSION(ipPacket), ipPacket.protocol);
+
+  if (TNET_IPv4_PACKET_VERSION(ipPacket) != 4 ||
+      ipPacket.protocol != TNET_IP_TYPE_TCP) {
+    TNET_DEBUG("Dropping packet");
+    continue;
+  }
+
+  TNET_DEBUG_IPv4_PACKET(frame);
+  TNET_DEBUG_TCP_SEGMENT(frame);
+
+  network->tcpipv4->Serve(network->tcpipv4, &frame);
 }
 
 void TNET_network_Network_serve(TNET_network_Network *network) {
-  uint8_t ethernetBytes[sizeof(TNET_EthernetFrame)] = {0};
+  uint8_t ethernetBytes[sizeof(TNET_network_EthernetFrame)] = {0};
   int err;
-  TNET_EthernetFrame *frame;
-  TNET_TCPIPv4Connection *conn;
+  TNET_tcpipv4_Connection *conn;
+  TNET_network_EthernetFrame frame = {0};
+  TNET_network_EthernetFrame frameResponse = {0};
+  int frameResponseLength = 0;
 
-  DEBUG("Listening");
+  TNET_DEBUG("Listening");
 
   while (1) {
+    memset(frame, 0, sizeof(frame));
+    memset(frameResponse, 0, sizeof(frameResponse));
+    frameResponseLength = 0;
+
     network->tapdevice->Read(network->tapdevice, &ethernetBytes,
                              sizeof(ethernetBytes));
 
-    frame = (TNET_EthernetFrame *)&ethernetBytes;
+    frame = *(TNET_EthernetFrame *)&ethernetBytes;
 
-    printf("TNET: Received frame of type %#06x\n", ntohs(frame->type));
+    printf("TNET: Received frame of type %#06x\n", ntohs(frame.type));
 
-    if (frame->type == htons(TNET_ETHERNET_TYPE_ARP)) {
-      TNET_ARPPacket packet = TNET_ARP_PACKET_FROM_ETHERNET_FRAME(frame);
-      DEBUG_ARP_PACKET(packet);
-      TNET_arpRespond(sock, frame);
-      continue;
+    switch (ntohs(frame.type)) {
+    case TNET_ETHERNET_TYPE_ARP:
+      TNET_network_Network_handleArp(network, &frame);
+      break;
+    case TNET_ETHERNET_TYPE_IPv4:
+      TNET_network_Network_handleIPv4(network, &frame);
+      break;
+    default:
+      TNET_DEBUG("Dropping frame");
+      break;
     }
-
-    if (frame->type != htons(TNET_ETHERNET_TYPE_IPv4)) {
-      DEBUG("Dropping frame");
-      continue;
-    }
-
-    auto ipPacket = TNET_IPv4_PACKET_FROM_ETHERNET_FRAME(frame);
-    printf("TNET: Received packet version %d, protocol %d\n",
-           TNET_IPv4_PACKET_VERSION(ipPacket), ipPacket.protocol);
-
-    if (TNET_IPv4_PACKET_VERSION(ipPacket) != 4 ||
-        ipPacket.protocol != TNET_IP_TYPE_TCP) {
-      DEBUG("Dropping packet");
-      continue;
-    }
-
-    DEBUG_IPv4_PACKET(frame);
-    DEBUG_TCP_SEGMENT(frame);
-
-    network->tcpipv4->Serve(network->tcpipv4, frame);
   }
 }
 
 int TNET_network_Network_Init(TNET_network_Network *network,
                               TNET_tapdevice_Tapdevice *tapdevice, int count) {
-  network->connections =
-      (TNET_TCPIPv4Connection *)malloc(sizeof(TNET_TCPIPv4Connection) * count);
-
-  if (connections == NULL) {
+  network->tcpipv4 = {0};
+  if (TNET_tcpipv4_TCPIPv4_Init(&network->tcpipv4, count) == NULL) {
     return -1;
   }
 
-  network->count = count;
-  network->filled = 0;
   network->tapdevice = tapdevice;
   network->Serve = TNET_network_Network_serve;
   network->Cleanup = TNET_network_Network_cleanup;
@@ -302,5 +287,5 @@ int TNET_network_Network_Init(TNET_network_Network *network,
 }
 
 void TNET_network_Network_cleanup(TNET_network_Network *network) {
-  free(network->connections);
+  network->tcpipv4->Cleanup();
 }

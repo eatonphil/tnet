@@ -114,7 +114,7 @@ int TNET_tapdevice_Tapdevice_initDevice(TNET_tapdevice_Tapdevice *tapdevice) {
 
 int TNET_tapdevice_Tapdevice_Init(TNET_tapdevice_Tapdevice *tapdevice,
                                   uint32_t ipv4Address, uint32_t ipv4Gateway) {
-  int error = TNET_tapdevice_Tapdevice_makeDevice(tapdevice);
+  int error = TNET_tapdevice_Tapdevice_initDevice(tapdevice);
   if (error != 0) {
     return error;
   }
@@ -142,4 +142,6 @@ int TNET_tapdevice_Tapdevice_read(TNET_tapdevice_Tapdevice *tapdevice,
   return read(tapdevice->fd, &buffer, bufferSize);
 }
 
-void TNET_tapdevice_Tapdevice_cleanup() { close(fd); }
+void TNET_tapdevice_Tapdevice_cleanup(TNET_tapdevice_Tapdevice *tapdevice) {
+  close(tapdevice->fd);
+}

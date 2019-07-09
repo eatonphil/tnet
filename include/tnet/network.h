@@ -8,9 +8,7 @@
 
 typedef struct {
   // Private
-  TNET_tcpipv4_Connection *connections;
-  int count;
-  int filled;
+  TNET_tcpipv4_TCPIPv4 *tcpipv4;
   TNET_tapdevice_Tapdevice *tapdevice;
 
   // Public

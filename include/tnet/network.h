@@ -3,20 +3,21 @@
 
 #include <net/if.h>
 
-#include <tnet/tapdevice.h>
-#include <tnet/tcp.h>
+#include <tnet/ethernet.h>
+#include <tnet/netif.h>
+#include <tnet/tcpipv4.h>
 
-typedef struct {
+typedef struct TNET_network_Network TNET_network_Network;
+struct TNET_network_Network {
   // Private
   TNET_tcpipv4_TCPIPv4 *tcpipv4;
-  TNET_tapdevice_Tapdevice *tapdevice;
 
   // Public
-  void (*Serve)(TNET_network_Network *network);
+  void (*Serve)(TNET_network_Network *network, TNET_netif_Netif *netif,
+                TNET_ethernet_Frame *frame);
   void (*Cleanup)(TNET_network_Network *network);
-} TNET_network_Network;
+};
 
-int TNET_network_Network_Init(TNET_network_Network *,
-                              TNET_tapdevice_Tapdevice *, int);
+int TNET_network_Network_Init(TNET_network_Network *network, int nConnections);
 
 #endif

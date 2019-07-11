@@ -4,12 +4,13 @@
 #include <stdlib.h>
 #include <unistd.h>
 
+#include <arpa/inet.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 
-#include "tnet/tap.h"
+#include "tnet/netif.h"
+#include "tnet/network.h"
 #include "tnet/tcp.h"
-#include "tnet/types.h"
 
 // SOURCE: https://stackoverflow.com/a/77336/1507139
 void generateBacktrace(int sig) {
@@ -34,27 +35,27 @@ int main() {
     return 1;
   }
 
-  TNET_tapdevice_Tapdevice tapdevice;
+  TNET_netif_Netif netif;
   uint32_t address = inet_addr("192.168.2.3");
   uint32_t gateway = inet_addr("192.168.2.1");
-  int error = TNET_tapdevice_Tapdevice_Init(&tapdevice, address, gateway);
+  int error = TNET_netif_Netif_Init(&netif, address, gateway);
   if (error != 0) {
     printf("TNET: Error initializing TAP device.\n");
-    return err;
+    return error;
   }
 
   TNET_network_Network network;
   int nConnections = 2;
-  error = TNET_network_Network_Init(&network, &tapdevice, nConnections);
+  error = TNET_network_Network_Init(&network, nConnections);
   if (error != 0) {
     printf("TNET: Error initializing TCP/IP stack.\n");
-    return err;
+    return error;
   }
 
-  network.Serve(&network);
+  network.Serve(&netif, &network);
 
   network.Cleanup(&network);
-  tapdevice.Cleanup(&tapdevice);
+  netif.Cleanup(&netif);
 
   return 0;
 }

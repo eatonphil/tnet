@@ -1,4 +1,11 @@
+#include "tnet/tcpipv4.h"
 
+#include <stddef.h>
+#include <stdint.h>
+#include <stdlib.h>
+
+#include "tnet/ethernet.h"
+#include "tnet/util.h"
 
 TNET_tcpipv4_Connection *
 TNET_tcpipv4_TCPIPv4_getConnection(TNET_tcpipv4_TCPIPv4 *tcpipv4,
@@ -57,8 +64,9 @@ TNET_tcpipv4_NewConnection(TNET_EthernetFrame *frame, int sock,
   return tcpipv4->connections + filled + 1;
 }
 
-TNET_tcpipv4_TCPIPv4_serve(TNET_tcpivp4_TCPIPv4 *tcpipv4,
-                           TNET_ethernet_Frame *frame) {
+void TNET_tcpipv4_TCPIPv4_serve(TNET_tcpipv4_TCPIPv4 *tcpipv4,
+                                TNET_netif_Netif *netif,
+                                TNET_ethernet_Frame *frame) {
   TNET_tcpipv4_Connection conn = {0};
   conn = TNET_tcpipv4_getConnection(frame);
   if (conn == NULL) {
@@ -72,15 +80,15 @@ TNET_tcpipv4_TCPIPv4_serve(TNET_tcpivp4_TCPIPv4 *tcpipv4,
   case TNET_TCP_STATE_CLOSED:
     break;
   case TNET_TCP_STATE_LISTEN:
-    DEBUG("Sending syn-ack");
+    TNET_DEBUG("Sending syn-ack");
     TNET_tcpSynAck(conn, frame);
-    DEBUG("Sent syn-ack");
+    TNET_DEBUG("Sent syn-ack");
     conn->state = TNET_TCP_STATE_SYN_RECEIVED;
     break;
   case TNET_TCP_STATE_SYN_RECEIVED:
-    DEBUG("Sending data");
-    TNET_tcpSend(conn, frame);
-    DEBUG("Sent data");
+    TNET_DEBUG("Sending data");
+    TNET_tcp_Send(conn, frame);
+    TNET_DEBUG("Sent data");
     conn->state = TNET_TCP_STATE_ESTABLISHED;
     break;
   case TNET_TCP_STATE_ESTABLISHED:
@@ -90,12 +98,12 @@ TNET_tcpipv4_TCPIPv4_serve(TNET_tcpivp4_TCPIPv4 *tcpipv4,
 }
 
 void TNET_tcpipv4_TCPIPv4_cleanup(TNET_tcpipv4_TCPIPv4 *tcpipv4) {
-  free(tpcipv4->connections);
+  free(tcpipv4->connections);
 }
 
-int TNET_tcpipv4_TCPIPv4_Init(TNET_tcpipv4_TCPIPv4 *tcpipv4) {
-  tcpipv4->connections =
-      (TNET_TCPIPv4Connection *)malloc(sizeof(TNET_TCPIPv4Connection) * count);
+int TNET_tcpipv4_TCPIPv4_Init(TNET_tcpipv4_TCPIPv4 *tcpipv4, int count) {
+  tcpipv4->connections = (TNET_tcpipv4_Connection *)malloc(
+      sizeof(TNET_tcpipv4_Connection) * count);
   if (tcpipv4->connections == NULL) {
     return -1;
   }
@@ -103,7 +111,7 @@ int TNET_tcpipv4_TCPIPv4_Init(TNET_tcpipv4_TCPIPv4 *tcpipv4) {
   tcpipv4->count = count;
   tcpipv4->filled = 0;
   tcpipv4->Cleanup = TNET_tcpipv4_TCPIPv4_cleanup;
-  tcpipv4->Serve = TNET_tcpipv4_TCPIPv4_Serve;
+  tcpipv4->Serve = TNET_tcpipv4_TCPIPv4_serve;
 
   return 0;
 }

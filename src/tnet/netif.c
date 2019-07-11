@@ -1,4 +1,4 @@
-#include "tnet/tapdevice.h"
+#include "tnet/netif.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -8,7 +8,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-int TNET_tapdevice_setFlags(ifreq *ifr, short flags) {
+int TNET_netif_setFlags(ifreq *ifr, short flags) {
   int sock = socket(AF_INET, SOCK_DGRAM, 0);
 
   // Get current flags
@@ -29,11 +29,10 @@ int TNET_tapdevice_setFlags(ifreq *ifr, short flags) {
   return 0;
 }
 
-// Queries for the mac address and assigns it on tapdevice.
+// Queries for the mac address and assigns it on netif.
 // Source:
 // https://www.cnx-software.com/2011/04/05/c-code-to-get-mac-address-and-ip-address/
-int TNET_tapdevice_Tapdevice_setMacAddress(
-    TNET_tapdevice_Tapdevice *tapdevice) {
+int TNET_netif_Netif_setMacAddress(TNET_netif_Netif *netif) {
   struct ifreq ifr = {0};
   strcpy(ifr.ifr_name, ifname);
   ifr.ifr_addr.sa_family = AF_INET;
@@ -45,12 +44,11 @@ int TNET_tapdevice_Tapdevice_setMacAddress(
     return -1;
   }
 
-  memcpy(tapdevice->mac, ifr.ifr_hwaddr.sa_data, sizeof(tapdevice->mac));
+  memcpy(netif->mac, ifr.ifr_hwaddr.sa_data, sizeof(netif->mac));
   return 0;
 }
 
-int TNET_tapdevice_Tapdevice_setIPv4Address(TNET_tapdevice_Tapdevice *tapdevice,
-                                            uint32_t address) {
+int TNET_netif_Netif_setIPv4Address(TNET_netif_Netif *netif, uint32_t address) {
   // Fill out IP address
   struct ifreq ifr2 = {0};
   strcpy(ifr2.ifr_name, ifname);
@@ -66,8 +64,7 @@ int TNET_tapdevice_Tapdevice_setIPv4Address(TNET_tapdevice_Tapdevice *tapdevice,
   }
 }
 
-int TNET_tapdevice_Tapdevice_setIPv4Gateway(TNET_tapdevice_Tapdevice *tapdevice,
-                                            uint32_t gateway) {
+int TNET_netif_Netif_setIPv4Gateway(TNET_netif_Netif *netif, uint32_t gateway) {
   // Set gateway
   struct rtentry route = {0};
   route.rt_flags = RTF_UP | RTF_GATEWAY;
@@ -90,7 +87,7 @@ int TNET_tapdevice_Tapdevice_setIPv4Gateway(TNET_tapdevice_Tapdevice *tapdevice,
   return 0;
 }
 
-int TNET_tapdevice_Tapdevice_initDevice(TNET_tapdevice_Tapdevice *tapdevice) {
+int TNET_netif_Netif_initDevice(TNET_netif_Netif *netif) {
   int tmpFd = open("/dev/net/tun", O_RDWR);
   if (tmpFd == -1) {
     return errno;
@@ -107,41 +104,39 @@ int TNET_tapdevice_Tapdevice_initDevice(TNET_tapdevice_Tapdevice *tapdevice) {
   }
 
   // Set up and running
-  TNET_tapdevice_Tapdevice_setFlags(&ifr, IFF_UP | IFF_RUNNING);
-  memcpy(tapdevice->ifname, ifr.ifr_name, IFNAMSIZ);
-  tapdevice->fd = tmpFd;
+  TNET_netif_Netif_setFlags(&ifr, IFF_UP | IFF_RUNNING);
+  memcpy(netif->ifname, ifr.ifr_name, IFNAMSIZ);
+  netif->fd = tmpFd;
 }
 
-int TNET_tapdevice_Tapdevice_Init(TNET_tapdevice_Tapdevice *tapdevice,
-                                  uint32_t ipv4Address, uint32_t ipv4Gateway) {
-  int error = TNET_tapdevice_Tapdevice_initDevice(tapdevice);
+int TNET_netif_Netif_Init(TNET_netif_Netif *netif, uint32_t ipv4Address,
+                          uint32_t ipv4Gateway) {
+  int error = TNET_netif_Netif_initDevice(netif);
   if (error != 0) {
     return error;
   }
 
-  error = TNET_tapdevice_Tapdevice_setMacAddress(tapdevice);
+  error = TNET_netif_Netif_setMacAddress(netif);
   if (error != 0) {
     return error;
   }
 
-  error = TNET_tapdevice_Tapdevice_setIPv4Address(tapdevice, ipv4Address);
+  error = TNET_netif_Netif_setIPv4Address(netif, ipv4Address);
   if (error != 0) {
     return error;
   }
 
-  error = TNET_tapdevice_Tapdevice_setIPv4Gateway(tapdevice, ipv4Gateway);
+  error = TNET_netif_Netif_setIPv4Gateway(netif, ipv4Gateway);
 
-  tapdevice->Read = TNET_tapdevice_Tapdevice_read;
-  tapdevice->Cleanup = TNET_tapdevice_Tapdevice_cleanup;
+  netif->Read = TNET_netif_Netif_read;
+  netif->Cleanup = TNET_netif_Netif_cleanup;
 
   return 0;
 }
 
-int TNET_tapdevice_Tapdevice_read(TNET_tapdevice_Tapdevice *tapdevice,
-                                  uint8_t *buffer, uint32_t bufferSize) {
-  return read(tapdevice->fd, &buffer, bufferSize);
+int TNET_netif_Netif_read(TNET_netif_Netif *netif, uint8_t *buffer,
+                          uint32_t bufferSize) {
+  return read(netif->fd, &buffer, bufferSize);
 }
 
-void TNET_tapdevice_Tapdevice_cleanup(TNET_tapdevice_Tapdevice *tapdevice) {
-  close(tapdevice->fd);
-}
+void TNET_netif_Netif_cleanup(TNET_netif_Netif *netif) { close(netif->fd); }

@@ -3,6 +3,15 @@
 
 #include <stdint.h>
 
+#include "tnet/ipv4.h"
+
+typedef enum {
+  TNET_TCP_STATE_CLOSED,
+  TNET_TCP_STATE_LISTEN,
+  TNET_TCP_STATE_SYN_RECEIVED,
+  TNET_TCP_STATE_ESTABLISHED,
+} TNET_tcp_State;
+
 typedef struct __attribute__((__packed__)) {
   uint16_t sourcePort;
   uint16_t destPort;
@@ -15,8 +24,8 @@ typedef struct __attribute__((__packed__)) {
   uint8_t options[40];
 } TNET_tcp_TCPSegmentHeader;
 
-const int TNET_TCP_PAYLOAD_SIZE =
-    TNET_IP_PAYLOAD_SIZE - sizeof(TNET_TCPSegmentHeader);
+#define TNET_TCP_PAYLOAD_SIZE                                                  \
+  (TNET_IP_PAYLOAD_SIZE - sizeof(TNET_tcp_TCPSegmentHeader))
 
 #define DEBUG_TCP_SEGMENT(frame)                                               \
   {                                                                            \
@@ -93,7 +102,7 @@ const int TNET_TCP_PAYLOAD_SIZE =
   segment.offsetAndFlags |= (flag << 8) & 0b1
 
 #define TNET_TCP_SEGMENT_FROM_ETHERNET_FRAME(frame)                            \
-  (*(TNET_TCPSegmentHeader *)(void *)&frame                                    \
+  (*(TNET_tcp_TCPSegmentHeader *)(void *)&frame                                \
         ->payload[TNET_IPv4_PACKET_LENGTH(                                     \
                       TNET_IPv4_PACKET_FROM_ETHERNET_FRAME(frame)) *           \
                   4])

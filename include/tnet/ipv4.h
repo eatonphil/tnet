@@ -3,6 +3,8 @@
 
 #include <stdint.h>
 
+#include "tnet/ethernet.h"
+
 #define DEBUG_IPv4_PACKET(frame)                                               \
   {                                                                            \
     auto ipPacket = TNET_IPv4_PACKET_FROM_ETHERNET_FRAME(frame);               \
@@ -60,7 +62,7 @@ typedef struct __attribute__((__packed__)) {
   uint8_t options[12];
 } TNET_IPv4PacketHeader;
 
-const int TNET_IP_PAYLOAD_SIZE =
-    TNET_ETHERNET_PAYLOAD_SIZE - sizeof(TNET_IPv4PacketHeader);
+#define TNET_IP_PAYLOAD_SIZE                                                   \
+  (TNET_ETHERNET_PAYLOAD_SIZE - sizeof(TNET_IPv4PacketHeader))
 
 #endif

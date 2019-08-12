@@ -5,33 +5,65 @@
 #include <stdlib.h>
 
 #include "tnet/ethernet.h"
+#include "tnet/ipv4.h"
 #include "tnet/util.h"
 
-TNET_tcpipv4_Connection *
-TNET_tcpipv4_TCPIPv4_getConnection(TNET_tcpipv4_TCPIPv4 *tcpipv4,
-                                   TNET_EthernetFrame *frame) {
-  TNET_IPv4PacketHeader packetHeader = {0};
-  packetHeader = TNET_IPv4_PACKET_FROM_ETHERNET_FRAME(frame);
-  TNET_TCPSegmentHeader segmentHeader = {0};
-  segmentHeader = TNET_TCP_SEGMENT_FROM_ETHERNET_FRAME(frame);
+void TNET_tcpipv4_Send(TNET_tcpipv4_Connection *conn,
+                       TNET_ethernet_EthernetFrame *frame) {
+  TNET_tcp_SegmentHeader segmentHeader =
+      TNET_TCP_SEGMENT_FROM_ETHERNET_FRAME(frame);
 
-  TNET_tcpipv4_Connection conn = {0};
-  int i = 0;
-  for (; i < tcpipv4->filled; i++) {
-    conn = tcpipv4->connections[i];
-    if (conn.sourceIPAddress == packetHeader.sourceIPAddress &&
+  TNET_tcp_SegmentHeader outSegmentHeader = {0};
+  uint8_t payload[sizeof(outSegmentHeader) + TNET_TCP_PAYLOAD_SIZE] = {0};
+  uint8_t msg[] = "HTTP/1.1 200 OK\r\n\r\n<h1>Hello world!</h1>";
+
+  // Set up TCP segment header
+  outSegmentHeader.sourcePort = segmentHeader.destPort;
+  outSegmentHeader.destPort = segmentHeader.sourcePort;
+  outSegmentHeader.sequenceNumber = htonl(conn->sequenceNumber++);
+  TNET_T/* /\* CP_SEGMENT_SET_ACK_FLAG(outSegmentHeader, 1); *\/ */
+/* /\*   outSegmentHeader.windowSize = segmentHeader.windowSize; *\/ */
+
+/* /\*   int segmentHeaderSize = 20; // Ignore options *\/ */
+/* /\*   // Expressed in terms of 32-bit words *\/ */
+/* /\*   TNET_TCP_SEGMENT_SET_DATA_OFFSET(outSegmentHeader, segmentHeaderSize / 4); *\/ */
+
+/* /\*   memcpy(payload, &outSegmentHeader, segmentHeaderSize); *\/ */
+/* /\*   memcpy(payload + segmentHeaderSize, msg, sizeof(msg)); *\/ */
+
+/* /\*   int segmentSize = segmentHeaderSize + sizeof(msg); *\/ */
+/* /\*   outSegmentHeader.checksum = checksum(payload, segmentSize); *\/ */
+/* /\*   // Recopy once checksum has been calculated. *\/ */
+/* /\*   memcpy(payload, &outSegmentHeader, segmentHeaderSize); *\/ */
+
+/* /\*   TNET_ipv4_Send(conn, frame, payload, segmentSize); *\/ */
+/* /\* } *\/ */
+
+/* /\* TNET_tcpipv4_Connection * *\/ */
+/* /\* TNET_tcpipv4_TCPIPv4_getConnection(TNET_tcpipv4_TCPIPv4 *tcpipv4, *\/ */
+/* /\*                                    TNET_EthernetFrame *frame) { *\/ */
+/* /\*   TNET_IPv4PacketHeader packetHeader = {0}; *\/ */
+/* /\*   packetHeader = TNET_IPv4_PACKET_FROM_ETHERNET_FRAME(frame); *\/ */
+/* /\*   TNET_SegmentHeader segmentHeader = {0}; *\/ */
+/* /\*   segmentHeader = TNET_TCP_SEGMENT_FROM_ETHERNET_FRAME(frame); *\/ */
+
+/* /\*   TNET_tcpipv4_Connection conn = {0}; *\/ */
+/* /\*   int i = 0; *\/ */
+/* /\*   for (; i < tcpipv4->filled; i++) { *\/ */
+/* /\*     conn = tcpipv4->connections[i]; *\/ */
+/* /\*     if (conn.sourceIPAddress == pa */ */cketHeader.sourceIPAddress &&
         conn.sourcePort == segmentHeader.sourcePort &&
         conn.destIPAddress == packetHeader.destIPAddress &&
         conn.destPort == segmentHeader.destPort) {
-      return tcpipv4->connections + i;
-    }
+    return tcpipv4->connections + i;
   }
+}
 
-  if (i != tcpipv4->count - 1) {
-    return NULL;
-  }
-
+if (i != tcpipv4->count - 1) {
   return NULL;
+}
+
+return NULL;
 }
 
 TNET_tcpipv4_Connection *
@@ -45,7 +77,7 @@ TNET_tcpipv4_NewConnection(TNET_EthernetFrame *frame, int sock,
 
   TNET_IPv4PacketHeader packetHeader =
       TNET_IPv4_PACKET_FROM_ETHERNET_FRAME(frame);
-  TNET_TCPSegmentHeader segmentHeader =
+  TNET_SegmentHeader segmentHeader =
       TNET_TCP_SEGMENT_FROM_ETHERNET_FRAME(frame);
 
   TNET_TCPIPv4Connection conn = {
@@ -87,7 +119,7 @@ void TNET_tcpipv4_TCPIPv4_serve(TNET_tcpipv4_TCPIPv4 *tcpipv4,
     break;
   case TNET_TCP_STATE_SYN_RECEIVED:
     TNET_DEBUG("Sending data");
-    TNET_tcp_Send(conn, frame);
+    TNET_tcpipv4_Send(conn, frame);
     TNET_DEBUG("Sent data");
     conn->state = TNET_TCP_STATE_ESTABLISHED;
     break;

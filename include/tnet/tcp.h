@@ -22,14 +22,15 @@ typedef struct __attribute__((__packed__)) {
   uint16_t checksum;
   uint16_t urgent;
   uint8_t options[40];
-} TNET_tcp_TCPSegmentHeader;
+} TNET_tcp_SegmentHeader;
 
 #define TNET_TCP_PAYLOAD_SIZE                                                  \
-  (TNET_IP_PAYLOAD_SIZE - sizeof(TNET_tcp_TCPSegmentHeader))
+  (TNET_IP_PAYLOAD_SIZE - sizeof(TNET_tcp_SegmentHeader))
 
 #define DEBUG_TCP_SEGMENT(frame)                                               \
   {                                                                            \
-    auto segment = TNET_TCP_SEGMENT_FROM_ETHERNET_FRAME(frame);                \
+    TNET_tcp_SegmentHeader segment =                                           \
+        TNET_TCP_SEGMENT_FROM_ETHERNET_FRAME(frame);                           \
     printf("TCP SEGMENT\n"                                                     \
            "Source port: %d\n"                                                 \
            "Dest port: %d\n"                                                   \
@@ -102,7 +103,7 @@ typedef struct __attribute__((__packed__)) {
   segment.offsetAndFlags |= (flag << 8) & 0b1
 
 #define TNET_TCP_SEGMENT_FROM_ETHERNET_FRAME(frame)                            \
-  (*(TNET_tcp_TCPSegmentHeader *)(void *)&frame                                \
+  (*(TNET_tcp_SegmentHeader *)(void *)&frame                                   \
         ->payload[TNET_IPv4_PACKET_LENGTH(                                     \
                       TNET_IPv4_PACKET_FROM_ETHERNET_FRAME(frame)) *           \
                   4])

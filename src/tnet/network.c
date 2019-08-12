@@ -122,37 +122,6 @@ void TNET_tcpSynAck(TNET_tcp_TCPIPv4Connection *conn,
  * sizeof(msg)); */
 /* } */
 
-void TNET_tcpSend(TNET_tcp_TCPIPv4Connection *conn,
-                  TNET_ethernet_EthernetFrame *frame) {
-  TNET_tcp_TCPSegmentHeader segmentHeader =
-      TNET_tcp_TCP_SEGMENT_FROM_ETHERNET_FRAME(frame);
-
-  TNET_tcp_TCPSegmentHeader outSegmentHeader = {0};
-  uint8_t payload[sizeof(outSegmentHeader) + TNET_tcp_TCP_PAYLOAD_SIZE] = {0};
-  uint8_t msg[] = "HTTP/1.1 200 OK\r\n\r\n<h1>Hello world!</h1>";
-
-  // Set up TCP segment header
-  outSegmentHeader.sourcePort = segmentHeader.destPort;
-  outSegmentHeader.destPort = segmentHeader.sourcePort;
-  outSegmentHeader.sequenceNumber = htonl(conn->sequenceNumber++);
-  TNET_tcp_TCP_SEGMENT_SET_ACK_FLAG(outSegmentHeader, 1);
-  outSegmentHeader.windowSize = segmentHeader.windowSize;
-
-  int segmentHeaderSize = 20; // Ignore options
-  // Expressed in terms of 32-bit words
-  TNET_TCP_SEGMENT_SET_DATA_OFFSET(outSegmentHeader, segmentHeaderSize / 4);
-
-  memcpy(payload, &outSegmentHeader, segmentHeaderSize);
-  memcpy(payload + segmentHeaderSize, msg, sizeof(msg));
-
-  int segmentSize = segmentHeaderSize + sizeof(msg);
-  outSegmentHeader.checksum = checksum(payload, segmentSize);
-  // Recopy once checksum has been calculated.
-  memcpy(payload, &outSegmentHeader, segmentHeaderSize);
-
-  TNET_ipv4Send(conn, frame, payload, segmentSize);
-}
-
 void TNET_network_Network_arpRespond(TNET_network_Network *network,
                                      TNET_network_ARPPacket *packet,
                                      TNET_network_ARPPacket *outPacket) {
